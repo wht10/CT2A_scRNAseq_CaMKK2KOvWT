@@ -136,7 +136,7 @@ m.ct2a <- ScaleData(m.ct2a, features = all.genes, assay = "RNA")
 DimPlot(m.ct2a, label = T, repel = T,label.size = 8) + theme(legend.position = "none")
 ggsave("m.ct2a_dimplot.pdf",device = "pdf", width = 2, height = 2, units = "in", scale = 6)
 DimPlot(m.ct2a, split.by = "Genotype") + theme(legend.position = "none")
-fdplot <- DotPlot(m.ct2a, assay = "RNA", features = c("Tcf7","Slamf6","Cd4","Cd8a","Cd3e",
+DotPlot(m.ct2a, assay = "RNA", features = c("Tcf7","Slamf6","Cd4","Cd8a","Cd3e",
                                             "Ncr1","Klrb1c",
                                             "Cd19",
                                             "Siglech","Tcf4","Fscn1","Ccr7","Itgax","H2-DMb2","Xcr1","Clec9a",
@@ -148,8 +148,8 @@ fdplot <- DotPlot(m.ct2a, assay = "RNA", features = c("Tcf7","Slamf6","Cd4","Cd8
                                             "P2ry12","Sall1","Crybb1",
                                             "Nos2","Arg1",
                                             "H2-Aa","Cd74",
-                                            "Apoe","Mrc1","Mertk","Adgre1")) + RotatedAxis()
-ggsave("m.ct2a_featuredotplot.pdf",fdplot,device = "pdf", width = 3, height = 1, units = "in", scale = 6)
+                                            "Apoe","Mrc1","Mertk","Adgre1")) + RotatedAxis() + theme(axis.text = element_text(size = 20), axis.title = element_blank()) 
+ggsave("m.ct2a_featuredotplot.pdf", width = 3, height = 1, units = "in", scale = 6)
 
 DimPlot(m.ct2a, repel = T, group.by = "MouseID")
 DimPlot(m.ct2a, repel = T, split.by = "MouseID")
@@ -469,8 +469,10 @@ EnhancedVolcano(g.markers[[11]],lab=rownames(g.markers[[11]]),x="avg_logFC",y="p
 
 #All Cell Type Heatmap
 #####
-Idents(m.ct2a) <- m.ct2a$Cell.Type
-ct2a.avg <- AverageExpression(m.ct2a,return.seurat = T, add.ident = "Genotype", assays = "RNA")
+
+Idents(m.ct2a) <- m.ct2a$Geno.Ident
+ct2a.avg <- AverageExpression(m.ct2a,assays = "RNA",add.ident = "hash.ID", return.seurat = T)
+
 DoHeatmap(subset(ct2a.avg, idents = c("Microglia","cMono","non-cMono")), 
           features = c("Apoe","Spint1","Cd74","H2-Aa","Ifi44","Ccl5","Cxcl9","Irf7","Spp1","Stat1","B2m","Chil3"),size = 3,draw.lines = F) + 
   scale_fill_gradientn(colors = c("blue","white","red")) + scale_x_discrete(labels = rep(c("CaMKK2KO","WT")))
@@ -520,29 +522,76 @@ prop.table(table(Idents(m.ct2a),m.ct2a$MouseID),margin = 2)*100
 DefaultAssay(m.ct2a) <- "RNA"
 tam.ct2a <- subset(m.ct2a,idents = c("DC-like TAM","Apoe+ TAM","Nos2+ TAM"))
 
-tamdegmast <- FindAllMarkers(tam.ct2a, only.pos = T,min.pct = .25,logfc.threshold = .25, test.use = "MAST")
-tamdegsmast <- tamdegmast %>% group_by(cluster) %>% top_n(n = 25, wt = avg_logFC)
-DoHeatmap(tam.ct2a, cells = WhichCells(tam.ct2a,downsample = 150),features = c(tamdegsmast$gene,"Nos2"))
+DimPlot(subset(m.ct2a, idents = c("cMono","Nos2+ TAM","Apoe+ TAM","DC-like TAM","non-cMono", "Microglia")), label = T, repel = T, label.size = 8) + theme(legend.position = "none")
+ggsave("TAMDim.pdf",height = 2,width = 2,scale = 3)
 
-tam.avg <- AverageExpression(tam.ct2a,return.seurat = T, add.ident = "MouseID", assays = "RNA")
-DoHeatmap(tam.avg, features = c(tamdegsmast$gene,"Nos2"),size = 3)
+tamdegmast <- FindAllMarkers(subset(m.ct2a, idents = c("cMono","Nos2+ TAM","Apoe+ TAM","DC-like TAM","non-cMono", "Microglia")), 
+                                    only.pos = T,min.pct = .1,logfc.threshold = .1, test.use = "MAST",verbose = T, assay = "RNA")
+tamdegsmast <- tamdegmast %>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)
+#DoHeatmap(tam.ct2a, cells = WhichCells(tam.ct2a,downsample = 150),features = c(tamdegsmast$gene,"Nos2"))
+library(viridis)
+levels(ct2a.avg) <- c("WT_cMono","Camkk2KO_cMono","WT_Nos2+ TAM","Camkk2KO_Nos2+ TAM","WT_Apoe+ TAM",
+                      "Camkk2KO_Apoe+ TAM","WT_DC-like TAM","Camkk2KO_DC-like TAM","WT_non-cMono","Camkk2KO_non-cMono",
+                      "WT_Microglia","Camkk2KO_Microglia")
+  
+DoHeatmap(subset(ct2a.avg, idents = c("WT_cMono","Camkk2KO_cMono","WT_Nos2+ TAM","Camkk2KO_Nos2+ TAM","WT_Apoe+ TAM",
+                                      "Camkk2KO_Apoe+ TAM","WT_DC-like TAM","Camkk2KO_DC-like TAM","WT_non-cMono","Camkk2KO_non-cMono",
+                                      "WT_Microglia","Camkk2KO_Microglia")), 
+          features = c("Apoe","Spint1","Spp1","Cd74","H2-Aa","Ifi44","Cxcl9","Irf7","Spp1","Stat1"),draw.lines = F, size = 3.5,angle = 35, disp.min = 0) + 
+  scale_fill_viridis(option = "plasma") 
+ggsave("MNPHeatmap.pdf",height = 2,width = 3.5,scale = 3)
 
-TAM1degs <- FindMarkers(m.ct2a, ident.1 = "DC-like TAM",ident.2 = c("Apoe+ TAM","Nos2+ TAM"), min.pct = .25, test.use = "MAST")
+#TAM1degs <- FindMarkers(m.ct2a, ident.1 = "DC-like TAM",ident.2 = c("Apoe+ TAM","Nos2+ TAM"), min.pct = .25, test.use = "MAST")
+tamdcvapo <- FindMarkers(m.ct2a, ident.1 = "DC-like TAM", ident.2 = "Apoe+ TAM", logfc.threshold = .1, min.pct = .1, test.use = "MAST", verbose = T, assay = "RNA")
 
-BiocManager::install("EnhancedVolcano")
+
 library(EnhancedVolcano)
 
 #CD274 is PDL1
-EnhancedVolcano(TAM1degs,lab=rownames(TAM1degs),x="avg_logFC",y="p_val_adj", 
-                selectLab = c("Ly6i","H2-Aa","Spp1","Stat1","Irf7","Cd74","Ccl5","Cxcl9","Cxcl10","Ccl6","Ccl9", "Vcam1", "Cd83", "Batf2",
-                              "C3","Apoe","Spint1","Cd63","Itga6","Ly6c2","Trem2","Mrc1","Arg1","Lgals1", "C1qa", "C1qb",
-                              "Fabp5","Ctsl","Cd9","Ciita","B2m","Tap1","Stat1","Ifi44","Ifi202b","Ifitm3","Ifit3","Isg15",
-                              "Fcrls","Olfml3","Sell","Plac8","Arg2","Irf1","Hif1a","Cd274","Il18bp","Cd47","Cx3cr1","Ccr2","Cd40",
-                              "Nfkbia","Ccl3","Ccl4","Egr1","Chil3","Fabp5"), 
-                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "DC-like TAM vs. Apoe+ and Nos2+ TAM", 
-                subtitle = NULL, legendPosition = "none", col = c("black","black","black","red")) 
+
+EnhancedVolcano(tamdcvapo,lab=rownames(tamdcvapo),x="avg_log2FC",y="p_val_adj", 
+                selectLab = c("H2-Aa","Spp1","Stat1","Irf7","Cd74","Ccl5","Cxcl9","Cxcl10","Ccl6","Ccl9", "Vcam1", "Cd83",
+                              "C3","Apoe","Cd63","Itga6","Ly6c2","Trem2","Mrc1","Arg1", "C1qa",
+                              "Cd9","Ciita","B2m","Tap1","Stat1","Ifi44","Ifi202b","Ifitm3",
+                              "Fcrls","Olfml3","Sell","Plac8","Arg2","Irf1","Hif1a","Nos2","Il18bp","Cd47","Cx3cr1","Ccr2","Cd40",
+                              "Nfkbia","Egr1","Lpl","Cd63","Ctsl","Cd68","Cadm1","Timp2","Card9"), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "DC-like TAM vs. Apoe+ TAM", 
+                subtitle = NULL, legendPosition = "none", col = c("red","red","red","red"),colAlpha = .2,ylab = bquote(~-Log[10]~"(adj.p-val)"), 
+                xlab =bquote(~Log[2]~"FC(DC-like TAM/Apoe+ TAM)") ,caption = "", labSize = 7) 
+ggsave("KOvWTMacVolc.pdf",width = 7,height = 4,scale = 2)
 
 VlnPlot(tam.ct2a,features = c("Trem2","Spp1","Apoe","Cxcl9","Ccl5","H2-Aa","Mrc1","Cx3cr1","Stat1","Irf7","C1qa"), sort = "increasing", pt.size = 0)
+
+#Trem2 Module score
+library(Nebulosa)
+
+#genes pulled from FigS5 Upregulated Stage 1 + 2 DAM https://www.cell.com/fulltext/S0092-8674(17)30578-0
+damgene2 <- list(c("Ank","Spp1","Axl","Csf1","Cst7","Cd9","Cadm1","Ccl6","Itgax","Cd63",
+             "Cd68","Ctsa","Lpl","Serpine2","Cd52","Ctsl","Hif1a"))
+
+damgene <- list(c("Ank","Spp1","Axl","Csf1","Cst7","Cd9","Cadm1","Ccl6","Itgax","Cd63",
+              "Cd68","Ctsa","Lpl","Serpine2","Cd52","Ctsl","Hif1a",
+             "Apoe","B2m","Cstb","Tyrobp","Timp2","H2-D1","Fth1","Lyz2","Ctsb","Ctsd","Trem2"))
+
+#genes pulled from FigS5 Upregulated DAM4E https://www.cell.com/fulltext/S0092-8674(17)30578-0
+consdam <- list(c("Trem2","Axl","Tyrobp","Lpl","Cst7","Ctsb","Apoe","Cd63","Cd9","Fth1","Spp1"))
+
+m.ct2a <- AddModuleScore(m.ct2a,damgene2,name = "DAM_Genes_Adv", assay = "RNA")
+m.ct2a <- AddModuleScore(m.ct2a,damgene,name = "DAM_Genes_All", assay = "RNA")
+m.ct2a <- AddModuleScore(m.ct2a,consdam,name = "DAM_Genes_Cons", assay = "RNA")
+
+plot_density(subset(m.ct2a, idents = c("cMono","Nos2+ TAM","Apoe+ TAM","DC-like TAM","non-cMono", "Microglia")),
+            features = "DAM_Genes_Adv1", pal = "inferno",method = "wkde") + 
+  labs(title = "Disease Associated Microglia Signature")
+
+plot_density(subset(m.ct2a, idents = c("cMono","Nos2+ TAM","Apoe+ TAM","DC-like TAM","non-cMono", "Microglia")),
+             features = "DAM_Genes_All1", pal = "inferno",method = "wkde") + 
+  labs(title = "Disease Associated Microglia Signature")
+
+plot_density(subset(m.ct2a, idents = c("cMono","Nos2+ TAM","Apoe+ TAM","DC-like TAM","non-cMono", "Microglia")),
+             features = "DAM_Genes_Cons1", pal = "inferno",method = "wkde") + 
+  labs(title = "Disease Associated Microglia Signature")
+ggsave("DAMFeatPlot.pdf",width = 3,height = 3,scale = 3)
 
 #TILDegs  and subsetting 
 #####
@@ -581,9 +630,21 @@ r.tils <- RunUMAP(r.tils, dims = 1:30)
 
 r.tils <- FindClusters(r.tils, resolution = .4)
 
-DimPlot(r.tils, label = T, repel = T)
-DimPlot(r.tils, label = T, repel = T, group.by = "Genotype")
-DimPlot(r.tils, label = T, repel = T, split.by = "Genotype")
+DimPlot(r.tils, label = T, repel = T,label.size = 8) + theme(legend.position = "none")
+ggsave("tilsdimplot.pdf",width = 2,height = 2, scale = 4)
+DimPlot(r.tils, split.by = "Genotype") + theme(legend.position = "none")
+ggsave("tilsdimplot_genosplit.pdf",width = 4,height = 2, scale = 6)
+
+levels(r.tils) <- c("Gamma-Delta TIL","Stem-Like TIL","CD8 TIL","Effector CD4","Treg")
+DotPlot(r.tils, assay = "RNA", features = c("Ikzf2","Foxp3","Icos","Ctla4","Il2ra","Tnfrsf1b","Il10",
+                                            "Cd4","Cd40lg","Cd200","Cd82","Zap70","Nfkb1","Il18rap","Ifng","Tnf",
+                                            "Cd8a","Cxcr6","Irf8","Pdcd1","Runx3","Lgals3",
+                                            "Tcf7","Slamf6","S1pr1","Cd7","Lef1",
+                                            "Cd163l1","Trdv4","Rorc","Sox13","Igf1r","Aqp3"
+                                           )) + RotatedAxis() + theme(axis.text = element_text(size = 20), axis.title = element_blank()) +
+  
+ggsave("tilsdotplot.pdf",width = 3, height = 1,scale = 6)
+
 DimPlot(r.tils, repel = T, group.by = "MouseID")
 DimPlot(r.tils, repel = T, split.by = "MouseID")
 
@@ -674,11 +735,18 @@ t.g.markers <- lapply(c(1:(length(levels(Idents(geno_tils)))/2)), function(i){
 #TIL KO V WT
 #CD8
 t.g.markers[[1]][1:75,]
-VlnPlot(r.tils,
-        features = c("Apoe","Gzmb","Lgals1","Gzma","Tox","Ccr2","Cd52","Prdx1","Stat3","Ctsw","Lgals3","Ly6c2"), 
+ VlnPlot(r.tils,
+        features = c("Apoe","Tox","Stat3","Gzmb","Gzma","Ccr2"), 
         idents = "CD8 TIL", 
-        split.by = "Genotype", split.plot = T)
+        split.by = "Genotype", split.plot = F, combine = T, pt.size = 0,cols = c("blue","red"))
+ggsave("CD8DEG.pdf",height = 3,width = 2,scale = 2)
 
+EnhancedVolcano(t.g.markers[[1]],lab=rownames(t.g.markers[[1]]),x="avg_logFC",y="p_val_adj", 
+                selectLab = c("Apoe","Gzmb","Lgals1","Gzma","Tox","Ccr2","Cd52","Stat3","Ctsw","Ly6c2"), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "", labSize = 6,
+                subtitle = NULL, legendPosition = "none", col = c("black","black","black","red"), ylab = "-Log[10](adj.p-val)", 
+                xlab ="Log[2]FC(CaMKK2KO/WT)" ,caption = "") 
+#c(rownames(t.g.markers[[1]] %>% slice_min(n = 35, order_by = p_val_adj)))
 # Stem
 t.g.markers[[2]][1:75,]
 VlnPlot(r.tils,
