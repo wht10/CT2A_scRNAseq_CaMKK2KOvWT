@@ -1,0 +1,31 @@
+﻿MGI Gene/Marker ID,Symbol,Name,Chr,Qualifier,Annotated Term,Context,Proteoform,Evidence,Inferred From,Reference(s)
+MGI:2668347,C8a,"complement component 8, alpha polypeptide",4,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:88236,C8b,"complement component 8, beta polypeptide",4,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:88237,C8g,"complement component 8, gamma polypeptide",2,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:1098282,C9,complement component 9,15,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:108443,Camp,cathelicidin antimicrobial peptide,9,,cytolysis by host of symbiont cells,,,ISO,P49913 ,J:164563 
+MGI:1861731,Ccl28,chemokine (C-C motif) ligand 28,13,,cytolysis in other organism,,,ISO,Q9NRJ3 ,J:164563 
+MGI:2138169,Cfhr1,complement factor H-related 1,1,,cytolysis by host of symbiont cells,,,ISO,Q03591 ,J:164563 
+MGI:88380,F2,coagulation factor II,2,,cytolysis by host of symbiont cells,,,ISO,P00734 ,J:164563 
+MGI:103266,Fgl2,fibrinogen-like protein 2,5,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:109266,Gzma,granzyme A,13,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:109267,Gzmb,granzyme B,14,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:109256,Gzmc,granzyme C,14,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:109255,Gzmd,granzyme D,14,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:109265,Gzme,granzyme E,14,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:109254,Gzmf,granzyme F,14,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:109253,Gzmg,granzyme G,14,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:96031,Hc,hemolytic complement,2,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:1098776,Lbp,lipopolysaccharide binding protein,2,,positive regulation of cytolysis,,,ISO,P18428 ,J:164563 
+MGI:96902,Lyz1,lysozyme 1,10,,cytolysis,,,IEA,KW-0081 ,J:60000 
+MGI:96897,Lyz2,lysozyme 2,10,,cytolysis,,,IEA,KW-0081 ,J:60000 
+MGI:1916694,Lyzl6,lysozyme-like 6,11,,cytolysis,,,IEA,KW-0081 ,J:60000 
+MGI:1922354,Mmd2,monocyte to macrophage differentiation-associated 2,5,,cytolysis,,,IEA,IPR005744 ,J:72247 
+MGI:97551,Prf1,perforin 1 (pore forming protein),10,,cytolysis,,,IEA,IPR037300 ,J:72247 
+MGI:97551,Prf1,perforin 1 (pore forming protein),10,,cytolysis,,,IEA,KW-0204 ,J:60000 
+MGI:109406,Reg3g,regenerating islet-derived 3 gamma,6,,cytolysis by host of symbiont cells,,,IDA,,J:241129 
+MGI:109406,Reg3g,regenerating islet-derived 3 gamma,6,,cytolysis by host of symbiont cells,,,ISO,Q6UW15 ,J:164563 
+MGI:1914317,Romo1,reactive oxygen species modulator 1,2,,cytolysis by host of symbiont cells,,,ISO,P60602 ,J:164563 
+MGI:1915691,Rraga,Ras-related GTP binding A,4,,regulation of cytolysis,,,ISO,U41654 ,J:73065 
+MGI:3647173,Spag11b,sperm associated antigen 11B,8,,cytolysis by host of symbiont cells,,,ISO,Q08648 ,J:164563 
+MGI:98725,Tgfb1,"transforming growth factor, beta 1",7,,negative regulation of cytolysis,,,ISO,P01137 ,J:164563 
