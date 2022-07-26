@@ -13,3 +13,5 @@ Details regarding how the seurat object was used to construct the visualizations
 Details regarding how the heatmaps wihtin the manuscript were produced are available [here](https://htmlpreview.github.io/?https://github.com/wht10/CT2A_scRNAseq_CaMKK2KOvWT/blob/master/Analysis_Markdown_Docs/Heatmap.html)
 
 Details regarding how the cell-cell communication analysis was performed are available [here](https://htmlpreview.github.io/?https://github.com/wht10/CT2A_scRNAseq_CaMKK2KOvWT/blob/master/Analysis_Markdown_Docs/Cell_Cell_Comm.nb.html)
+
+.rmd files corresponding to the above markdown documents and session info can be found [here](https://github.com/wht10/CT2A_scRNAseq_CaMKK2KOvWT/tree/master/RMD_session_info)
