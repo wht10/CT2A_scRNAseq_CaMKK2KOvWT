@@ -1,0 +1,346 @@
+---
+title: "Utilizing a Heatmap to validate single-cell cluster identities with user-selected Marker Genes"
+author: "Jonathan Perera, William Tomaszeswki"
+date: '`r Sys.Date()`'
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+This vignette reproduces the creation of a heatmap utilized for the validation or identification of cluster identities in a Seurat Object. Our purpose for this heatmap was to crosscheck and validate the cluster identities that we had manually annotated. For this approach, the user must have a list of genes that they hope to use to validate the identify of a cluster of cells that may be expected to surface through dimensionality reduction and clustering. It may also be used for the initial identification of cell-types based on expected marker gene expression levels. The standard [Seurat workflow](https://satijalab.org/seurat/articles/pbmc3k_tutorial.html) was used to process the data.
+
+## I. Setup
+### Loading the Required Packages
+Please install and load the following packages. If not installed use the corresponding links given.
+```{r, message = FALSE, warning = FALSE}
+library("Seurat")
+library("ggplot2")
+library("dplyr")
+library("magrittr")
+library(patchwork)
+library(doParallel)
+library(matlib)
+library(magick)
+library(viridis)
+library(tictoc)
+library(dendsort)
+library("ComplexHeatmap")
+library(circlize)
+```
+
+### Loading the R Object
+We begin our vignette a pre-processed (filtered, normalized, clustered, annotated, etc) Seurat Object of single cell RNAseq (scRNAseq) data from a 10x Genomics experiment. If you are beginning with the raw data not in the form of a Seurat Object, please refer to our previous vignette for instructions on the creation and processing of a Seurat Object.
+
+The Seurat object used in the paper can be accessed under zenodo accession [6654420](https://zenodo.org/record/6654420).
+
+```{r}
+download_zenodo("10.5281/zenodo.6654420",files = "Processed_CD45_Live_Fig2b.rds")
+m.ct2a <- readRDS("Processed_CD45_Live_Fig2b.rds")
+Idents(m.ct2a) <- m.ct2a$Cell.Type
+```
+
+
+### Loading Your experiment’s Gene Set
+Now to create a list of all genes being measured in this specific experiment. The purpose of doing this is to filter out potential marker genes that may not be measured in this experiment.
+
+```{r}
+gene_features <- m.ct2a@assays$RNA@counts@Dimnames[[1]]
+# This produces a list of all genes being measured in the experiment
+```
+
+
+## III. Marker Genes from Literature
+These are the literature-derived genes, that you have decided are appropriate for the identification/validation of the interested cell types present in your Seurat Object. Here we wanted to validate clusters that we had manually annotated within the Seurat Object prior.
+
+### Loading Marker Genes
+The cell types of interest here were DC cells (1, 2, 3, 4), Classical and Non-Classical Monocytes, NK cells, Basophils, B cells, T cells, Neutrophils, Macrophages, and Microglia. We obtained marker genes for these cell types from the following resources: [Microglia ]( https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5450644/) (Fig 2a, Bottom Left Quadrant in Red) https://actaneurocomms.biomedcentral.com/articles/10.1186/s40478-019-0665-y (Fig 1B.) 
+[Macrophages ](https://www.nature.com/articles/ni.2419) (Fig 4a.) 
+[All Other Cells ](https://www.cell.com/immunity/fulltext/S1074-7613(19)30126-8?_returnURL=https%3A%2F%2Flinkinghub.elsevier.com%2Fretrieve%2Fpii%2FS1074761319301268%3Fshowall%3Dtrue#secsectitle0035)
+
+```{r}
+# Neutrophils
+Neu <- strsplit(c("S100a9, S100a8, Mmp9, Csf3r, Mmp8, Il1rn, Cxcr2"), ", ")
+
+# DC cells
+DC1 <- strsplit(c("Xcr1, Cadm1, Cd36, Itgae, Cd24a, Rab7b"), ", ")  #+1
+DC2 <- strsplit(c("Lilrb4, Itgax, H2-DMb2, Csf1r, Cebpb, Tnfsf12"), ", ")  #+2
+DC3 <- strsplit(c("Fscn1, Ccr7, Ccl22, Marckl1, Cd274, Tnfrsf9, Sema7a, Stat4, Il12b, "),
+    ", ")  #+2
+DC4 <- strsplit(c("Siglech, Ccr9, Bst2, Bcl11a, Runx2, Tcf4, Pld4"), ", ")  #+2
+
+# Monocytes
+Classical_Mono <- strsplit(c("Vcan, Ly6c1, Ly6c2"), ", ")
+Nonclassical_Mono <- strsplit(c("Cd300e, Itgal, Ace, Fcgr4"), ", ")
+
+# NK cells
+NK <- strsplit(c("Gzma, Klrb1c, Ncr1, Klra4, Eomes, Gzmb, Fasl, Klrk1"), ", ")
+
+# Basophils
+Baso <- strsplit(c("Il6, Gata2, Cpa3, Ms4a2, Fcer1a"), ", ")
+
+# B cells
+B_cells <- strsplit(c("Cd79a, Fcmr, Cd79b, Cd19, Fcer2a, Pax5, Cd22"), ", ")
+
+# T cells
+T_cells <- strsplit(c("Cd3d, Cd3e, Cd3g, Cd28"), ", ")
+
+# Macrophages
+Mac <- strsplit(c("Pecr, Tmem195, Ptplad2, 1810011H11Rik, Fert2, Tlr4, Adgre1, Mertk, Mr1, Arsg, Fcgr1, Fgd4, Sqrdl, Csf3r, Plod1, Tom1, Pld3, Tpp1, Ctsd, Lamp2, Pla2g4, Tlr7, Cd14, Tbxas1, Fcgr3, Sepp1, Cd164, Tcn2, Dok3, Ctsl, Tspan14, Comt1, Tmem77, Abca1"),
+    ", ")
+
+# Microglia
+Microglia <- strsplit(c("Crybb1, Siglech, Xlr, Sall1, Pros1, Slc2a5, P2ry12, Tmem119, St3gal6, P2ry13, Sparc, Slco2b1, Gpr34, Siglech-H, Olfml3, Hpgds, Fcrls"), ", ")
+```
+
+### Converting Lists to Vectors
+```{r}
+chr_to_array_gene <- function(x) {
+    b <- length(x[[1]])
+    y <- vector(mode = "character", length = b)
+    for (i in 1:b) {
+        y[i] <- x[[1]][i]
+    }
+    return(y)
+}
+```
+This function converts the layered lists of genes for each cell type genetic signature into vector format.
+```{r}
+Neu_array <- chr_to_array_gene(Neu)
+DC1_array <- chr_to_array_gene(DC1)
+DC2_array <- chr_to_array_gene(DC2)
+DC3_array <- chr_to_array_gene(DC3)
+DC4_array <- chr_to_array_gene(DC4)
+ClassicalMono_array <- chr_to_array_gene(Classical_Mono)
+Nonclassical_Mono_array <- chr_to_array_gene(Nonclassical_Mono)
+NK_array <- chr_to_array_gene(NK)
+Baso_array <- chr_to_array_gene(Baso)
+B_cell_array <- chr_to_array_gene(B_cells)
+T_cell_array <- chr_to_array_gene(T_cells)
+Microglia_array <- chr_to_array_gene(Microglia)
+Mac_array <- chr_to_array_gene(Mac)
+```
+### Filtering Out Genes Not-Present in Dataset
+```{r}
+filter_genes <- function(x, gene_feature = gene_features) {
+    index <- match(x, gene_feature)
+    x_matched <- gene_features[index]
+    x_matched <- x_matched[!is.na(x_matched)]
+    return(x_matched)
+}
+```
+This function uses previously created list of all genes present in the experiment (gene_features) to only include present genes in the signature for each cell type. Each matched array corresponds to a cell type.
+```{r}
+Neu_matched <- filter_genes(Neu_array)
+DC1_matched <- filter_genes(DC1_array)
+DC2_matched <- filter_genes(DC2_array)
+DC3_matched <- filter_genes(DC3_array)
+DC4_matched <- filter_genes(DC4_array)
+ClassicalMono_matched <- filter_genes(ClassicalMono_array)
+Nonclassical_Mono_matched <- filter_genes(Nonclassical_Mono_array)
+Mac_matched <- filter_genes(Mac_array)
+NK_matched <- filter_genes(NK_array)
+Baso_matched <- filter_genes(Baso_array)
+B_cell_matched <- filter_genes(B_cell_array)
+T_cell_matched <- filter_genes(T_cell_array)
+Microglia_matched <- filter_genes(Microglia_array)
+```
+
+Combining all the single vectors into a Gene List
+```{r}
+genes_to_plot_use <- c(DC1_matched, DC2_matched, DC3_matched, DC4_matched, Microglia_matched,
+    NK_matched, Baso_matched, Neu_matched, B_cell_matched, T_cell_matched, Nonclassical_Mono_matched,
+    ClassicalMono_matched, Mac_matched)
+# Remove any gene name duplicates from the single vectors gene signatures
+genes_to_plot2 <- genes_to_plot_use[!duplicated(genes_to_plot_use)]
+
+cluster_ids <- strsplit(c("Neut, DC1, DC2, DC3, pDC, Microglia, Baso, B Cell, NK Cell, CD8 TIL, CD4 TIL, Stem-Like TIL, Apoe+ TAM, DC-like TAM, Nos2+ TAM, cMono, non-cMono"),
+    ", ")
+cluster_ids <- chr_to_array_gene(cluster_ids)
+# This should be a vector of the given identities of each of the pre-identified
+# cell types in the Seurat Object. If cell identities have not been discerned,
+# this vector should contain cluster number as it referred to in the Seurat
+# Object.
+```
+
+## IV. Heat Map
+The heat-map itself is the vertical concatenation of individual heat maps for each of the literature-based gene signatures through the use of the [ComplexHeatMap](https://jokergoo.github.io/ComplexHeatmap-reference/book/) package (Gu, Z. Complex heatmaps reveal patterns and correlations in multidimensional genomic data. Bioinformatics 2016.). For example, the gene signature for cDC1 cells (Xcr1, Cadm1, Cd36, Itgae, Cd24a, Rab7b) will be on the y-axis and the cluster cell types from the Seurat Object will be on the x-axis. The average expression of each gene in the signature is plotted for each cell-type.
+
+### Average Expression and Preparation
+This step calculates the average gene expression of all the cells of each cluster for each gene. These numerical scores will be normalized and used in the creation of the heat map as the visualization we created displays gene expression on the cluster, and not cell, level.
+
+```{r, message = FALSE, warning = FALSE, results = "hide"}
+Idents(m.ct2a) <- m.ct2a$Cell.Type
+# ^Depending on what you named the clusters in your pre-processing, please
+# change $Cell.Type to the appropriate name.
+
+cluster.averages <- AverageExpression(m.ct2a, return.seurat = TRUE, assays = "RNA")
+cluster.ids <- m.ct2a$Cell.Type
+
+# Matrix with each of the genes from the gene signatures as processed in the
+# previous step.
+mat <- cluster.averages[["RNA"]]@data[genes_to_plot2, ] %>%
+    as.matrix()
+# Scaling the matrix
+mat <- t(scale(t(mat)))
+```
+
+```{r, message = FALSE, warning = FALSE}
+quantile(mat, c(0.1, 0.95))
+```
+This is a matrix of all the genes of interest as rows and the cell types from the m.ct2a as columns with average expression plotted for each cell type (NK cell, Basophil, etc.) for every gene. This large matrix was subdivided into the sub-matrices for each of the gene signatures of interest (Ex. 'Microglia Signature', 'cDC2 signature', etc.) This sub-matrix is a set of rows extracted out of the larger matrix corresponding to each of the gene signatures of interest. Each matrix will be transformed into a heatmap; all heatmaps will be vertically concatenated. This was done to enable to use of greater editing and customization flexibility through the innate features of Complex HeatMap.
+```{r}
+DC1_sig = mat[1:6, ]
+DC2_sig = mat[7:11, ]
+DC3_sig = mat[12:19, ]
+pDC_sig = mat[20:26, ]
+Micro_sig = mat[27:41, ]
+NK_sig = mat[42:49, ]
+Baso_sig = mat[50:54, ]
+Neut_sig = mat[55:61, ]
+Bcell_sig = mat[62:68, ]
+Tcell_sig = mat[69:72, ]
+noncMono_sig = mat[73:76, ]
+cMono_sig = mat[77:79, ]
+TAM_sig = mat[80:103, ]
+```
+### Colors 
+Here you may choose a color of interest for the heat map. See ______ for other color options.
+```{r}
+color_choice = viridis(n = 256, option = "inferno")
+```
+### Column Order 
+Here we set the order of the columns that will appear for each of the gene signatures. In this sample heat map plot, this order is referring to the order of cell identities at the bottom of the plot. This will be used as the default input for the function that will be used to create the indidivual heatmap objects for each annotated cell type. These individual heat maps can then be concatenated.
+```{r}
+column_order = factor(rep(cluster_ids[1:17], 1), levels = c(cluster_ids[9:12], cluster_ids[4],
+    cluster_ids[14], cluster_ids[8], cluster_ids[7], cluster_ids[13], cluster_ids[15:17],
+    cluster_ids[6], cluster_ids[5], cluster_ids[1:3]))
+```
+### Example Single Gene Signature HeatMap
+```{r}
+example_heatmap = Heatmap(DC3_sig, name = "Gene Expression", cluster_columns = TRUE,
+    column_split = column_order, show_column_dend = FALSE, cluster_column_slices = FALSE,
+    column_title_gp = gpar(fontsize = 18), column_gap = unit(0.5, "mm"), column_title = "Validation of Manual Annotations",
+    column_order = cluster_ids, show_row_dend = FALSE, col = color_choice, row_title = "cDC3 signature",
+    cluster_rows = FALSE, column_names_gp = gpar(fontsize = 18), row_names_gp = gpar(fontsize = 14),
+    row_title_gp = gpar(fontsize = 14), row_title_rot = 0, show_column_names = TRUE,
+    use_raster = TRUE, raster_quality = 1)
+
+# Display HeatMap
+example_heatmap
+```
+## V. Creation of Combined HeatMap
+This section will discuss the creation of the individual heat maps in preparation for the vertical concatenation in order to create the final heat map.
+
+### Function for creating heat maps
+```{r}
+color_choice = viridis(n = 256, option = "inferno")
+# This is a universal choice on color to maintain consistency throughout the
+# heatmaps. This is may be changed within the function according to the user's
+# preference.
+
+create_heatmap <- function(matrix, celltype_name, order_of_celltype, color = color_choice,
+    title = "Validation of Manual Annotations") {
+    heatmap = Heatmap(matrix, name = "Gene Expression", cluster_columns = TRUE, column_split = order_of_celltype,
+        show_column_dend = FALSE, cluster_column_slices = FALSE, column_title_gp = gpar(fontsize = 18),
+        column_gap = unit(0.5, "mm"), column_title = title, column_order = cluster_ids,
+        show_row_dend = FALSE, col = color, row_title = paste(celltype_name, "signature"),
+        cluster_rows = FALSE, column_names_gp = gpar(fontsize = 18), row_names_gp = gpar(fontsize = 14),
+        row_title_gp = gpar(fontsize = 14), row_title_rot = 0, show_column_names = TRUE,
+        use_raster = TRUE, raster_quality = 1)
+    return(heatmap)
+}
+
+# This function will creates an graphical heat map object based on cell type.
+# This was created to condense the code. The variables may be adjusted within
+# the function to your particular needs.
+```
+### Creating individual heat maps
+```{r}
+# Using the function defined above we can create individual heat maps for each
+# of the cell signature sub-matrices.
+
+h1 = create_heatmap(DC1_sig, "cDC1", column_order)
+h2 = create_heatmap(DC2_sig, "cDC2", column_order)
+h3 = create_heatmap(DC3_sig, "cDC3", column_order)
+h4 = create_heatmap(pDC_sig, "pDC", column_order)
+h5 = create_heatmap(Micro_sig, "Microglia", column_order)
+h6 = create_heatmap(NK_sig, "NK cell", column_order)
+h7 = create_heatmap(Baso_sig, "Basophil", column_order)
+h8 = create_heatmap(Neut_sig, "Neutrophil", column_order)
+h9 = create_heatmap(Bcell_sig, "B cell", column_order)
+h10 = create_heatmap(Tcell_sig, "T cell", column_order)
+h11 = create_heatmap(noncMono_sig, "non-cMono", column_order)
+h12 = create_heatmap(cMono_sig, "cMono", column_order)
+h13 = create_heatmap(TAM_sig, "TAM", column_order)
+```
+### Vertical Concatenation of Individual Heat Maps (Supp. Fig.2a)
+```{r fig.height= 20, fig.width = 10, message = FALSE, warning = FALSE}
+# For Final Plot, change fonts and make rasterization quality = 4
+h_list = h1 %v% h2 %v% h3 %v% h4 %v% h5 %v% h6 %v% h7 %v% h8 %v% h9 %v% h10 %v% h11 %v%
+    h12 %v% h13 
+draw(h_list, ht_gap = unit(0.05, "cm"))
+```
+The heatmap can then be saved with your desired dimensions through the 'Export' option in the Plot Viewer in Rstudio.
+
+## VI. Genotype Comparison Heat-Map 
+This section details the creation of a comparison plot between WT and KO for selected genes. 
+
+```{r}
+Idents(m.ct2a) <- m.ct2a$Cell.Type
+
+#Taking a subset of only the cell types of interest
+m.ct2a2 <- subset(m.ct2a, idents = c("Apoe+ TAM","cMono", "DC-like TAM", "Microglia", "non-cMono", "Nos2+ TAM"))
+```
+
+These selected genes are associated with Damage-Associated Microglia, IFN Response, Immunostimulation, and Antigen Processing
+```{r}
+#Genes of interest
+gene_comp <- strsplit(c("Apoe, Spp1, Cd9, Cd63, Stat1, Irf1, Irf7, Ifi44, Lfi202b, Irgm2, Mefv, Ifitm1, Ifitm2, Ifitm3, Cxcl9, Cxcl10, Ccl5, Cxcl13, Cxcl16, Cd40, Cd74, H2-Aa, H2-Eb1, Ciita, B2m, Psmb9, Psmb8, Tap1"), ", ")
+gene_comp_array <- chr_to_array_gene(gene_comp)
+gene_comp_matched <- filter_genes(gene_comp_array)
+```
+
+Creating Matrix 
+```{r}
+cluster.averages2 <- AverageExpression(m.ct2a2, return.seurat = TRUE, assays = "RNA", add.ident = "Genotype")
+
+#creating gene expression matrix
+mat2 <- cluster.averages2[["RNA"]]@data[gene_comp_matched, ] %>%
+    as.matrix() 
+mat2 <- t(scale(t(mat2)))
+quantile(mat2)
+```
+Splitting  by Genotype and ordering cell types 
+```{r}
+mat3 <- mat2[,c(1, 9, 3, 7, 11, 5, 2, 10, 4, 9, 12, 6)]
+KOmat <- mat3[,1:6]
+colnames(KOmat) <- c("Apoe+ TAM","cMono", "DC-like TAM", "Microglia", "non-cMono", "Nos2+ TAM")
+WTmat <- mat3[,7:12]
+colnames(WTmat) <- c("Apoe+ TAM","cMono", "DC-like TAM", "Microglia", "non-cMono", "Nos2+ TAM")
+cluster.ids2 <- levels(m.ct2a2)
+comp_order2 <- as.factor(c("Apoe+ TAM","cMono", "DC-like TAM", "Microglia", "non-cMono", "Nos2+ TAM"))
+```
+
+Creating Individual Heatmaps (Fig. 6e)
+```{r, fig.asp = 1, fig.width = 5, message = FALSE, warning = FALSE}
+WTmap = Heatmap(WTmat, name = "Gene Expression", cluster_columns = TRUE, 
+                           show_column_dend = FALSE, cluster_column_slices = FALSE,
+                           column_split = comp_order2,
+    column_title_gp = gpar(fontsize = 12), column_gap = unit(0, "mm"), column_title = "WT",
+    column_order = cluster.ids2, show_row_dend = FALSE, col = color_choice,
+    cluster_rows = FALSE, column_names_gp = gpar(fontsize = 9), row_names_gp = gpar(fontsize = 7),
+    row_title_gp = gpar(fontsize = 10), row_title_rot = 0, show_column_names = TRUE,
+    use_raster = TRUE, raster_quality = 1)
+
+KOmap = Heatmap(KOmat, name = "Gene Expression", cluster_columns = TRUE, 
+                           show_column_dend = FALSE, cluster_column_slices = FALSE,
+                           column_split = comp_order2,
+    column_title_gp = gpar(fontsize = 12), column_gap = unit(0, "mm"), column_title = "CaMKK2 KO",
+    column_order = cluster.ids2, show_row_dend = FALSE, col = color_choice,
+    cluster_rows = FALSE, column_names_gp = gpar(fontsize = 9), row_names_gp = gpar(fontsize = 7),
+    row_title_gp = gpar(fontsize = 10), row_title_rot = 0, show_column_names = TRUE,
+    use_raster = TRUE, raster_quality = 1)
+
+# Display Heatmap
+comp_map = KOmap + WTmap
+draw(comp_map, ht_gap = unit(0.05, "cm"))
+```

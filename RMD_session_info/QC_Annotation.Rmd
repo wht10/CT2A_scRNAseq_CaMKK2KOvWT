@@ -1,0 +1,508 @@
+---
+title: "QC and Annotation"
+author:  "William Tomaszeswki, Jonathan Perera"
+date: '2022-04-21'
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This vignette recapitulates the processing of the data, creation of the Seurat object, quality control, and several visualizations. This was based on the protocols from Satija et al, including the [Guided Cluster Tutorial](https://satijalab.org/seurat/articles/pbmc3k_tutorial.html), [Demultiplexing with hashtag oligos (HTOs)](https://satijalab.org/seurat/archive/v3.0/hashing_vignette.html), [Introduction to SCTransform](https://satijalab.org/seurat/articles/sctransform_v2_vignette.html).
+
+## I. Setup 
+### Loading the Required Packages
+Please install and load the following packages. If not installed use the corresponding links given.
+```{r packages, message = FALSE, warning = FALSE}
+#BiocManager::install("Seurat")
+library(tidyverse)
+library(Seurat)
+library(patchwork)
+library(viridis) 
+library(readxl)
+library(scater)
+library(biomaRt)
+library(ggplot2)
+library(gridExtra)
+library(EnhancedVolcano)
+library(kableExtra)
+library(stringr)
+library(EnhancedVolcano)
+library(Nebulosa)
+```
+
+## II. Reading in count matrices and object assembly
+### Creating Seurat Object
+
+Raw data is available under accession [GSE197879](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE197879).
+
+In this raw data file locate CaMKK2KO_barcodes.tsv.gz, CaMKK2KO_features.tsv.gz, and CaMKK2KO_matrix.mtx.gz and place these files in a folder within your working directory called "KOraw_feature_bc_matrix". Identify the analogous files for the WT library and place in a folder called "WTraw_feature_bc_matrix" in your working directory.
+
+```{r, message = FALSE, warning = FALSE, results = "hide"}
+KO <- Read10X("KOraw_feature_bc_matrix")
+WT <- Read10X("WTraw_feature_bc_matrix")
+
+KOs <- CreateSeuratObject(KO$`Gene Expression`, project = "CaMKK2KO", min.cells = 3, min.features = 200)
+WTs <- CreateSeuratObject(WT$`Gene Expression`, project = "WT", min.cells = 3, min.features = 200)
+```
+### Demultiplexing with hashtag oligos
+By tagging ubiquitously expressed surface proteins with an unique oligo-tagged antibody we are able to run a single experiment for cells from multiple samples. We can demultiplex these samples to return these cells to their original sample-of-origin. 
+
+Check to make sure both gene expression and the antibody capture matrices have identical columns
+```{r, message = FALSE, warning = FALSE, results = 'hide'}
+identical(colnames(KO$`Gene Expression`),colnames(KO$`Antibody Capture`))
+
+#Subset the RNA counts by identifying the cell barcodes detected by both RNA and HTO, which we confirmed were identical.
+KOHTOs <- KO$`Antibody Capture`[,Cells(KOs)]
+WTHTOs <- WT$`Antibody Capture`[,Cells(WTs)]
+
+#Adding the HTO data to the Seurat Object as an independent assay
+KOs[["HTO"]] <- CreateAssayObject(KOHTOs)
+WTs[["HTO"]] <- CreateAssayObject(WTHTOs)
+
+#Normalizing the data through Centered log-ratio (CLR) transformation
+KOs <- NormalizeData(KOs, assay = "HTO", normalization.method = "CLR")
+WTs <- NormalizeData(WTs, assay = "HTO", normalization.method = "CLR")
+
+#The HTODemux function links cells from the combined experiments to their original samples. 
+KOs <- HTODemux(KOs, assay = "HTO", positive.quantile = .99)
+WTs <- HTODemux(WTs, assay = "HTO", positive.quantile = .99)
+```
+### Visualization of Cell Classification 
+Here we can visualize the classification of the cells present in the KO and WT experiments that were classified as singlet, doublet, and negative from the object meta data.
+```{r, message = FALSE, warning = FALSE}
+table(KOs$HTO_classification.global)
+table(WTs$HTO_classification.global)
+```
+HTO enrichment visualization through ridge plots
+```{r, message = FALSE, warning = FALSE}
+Idents(KOs) <- "HTO_maxID"
+RidgePlot(KOs, assay = "HTO", features = rownames(KOs[["HTO"]])[1:4],ncol = 4)
+```
+```{r, message = FALSE, warning = FALSE}
+Idents(WTs) <- "HTO_maxID"
+RidgePlot(WTs, assay = "HTO", features = rownames(WTs[["HTO"]])[1:4],ncol = 4)
+```
+A feature scatter plot helps confirm that there is mutual exclusivity in singlets; completed by visualizing HTO pairs from 
+```{r}
+FeatureScatter(KOs, feature1 = "hto_M1", feature2 = "hto_M2")
+```
+```{r}
+FeatureScatter(WTs, feature1 = "hto_M1", feature2 = "hto_M2")
+```
+```{r}
+table(KOs@meta.data$HTO_maxID)
+table(WTs@meta.data$HTO_maxID)
+```
+We then subset the objects to only contain the Singlets.
+```{r}
+Idents(KOs) <- "HTO_classification.global"
+KOss <- subset(KOs, idents = "Singlet")
+
+Idents(WTs) <- "HTO_classification.global"
+WTss <- subset(WTs, idents = "Singlet")
+```
+The tables are added here once more for comparison. 
+```{r}
+table(KOss@meta.data$HTO_maxID)
+table(WTss@meta.data$HTO_maxID)
+```
+Finally the two sample identities are added to the metadata of the new subsetted objects. This is followed by merging the two objects into a single object. 
+```{r}
+KOss[["Genotype"]] <- "Camkk2KO"
+WTss[["Genotype"]] <- "WT"
+
+m.ct2a <- merge(KOss, y = WTss, add.cell.ids = c("Camkk2KO","WT"), project = "merged.CT2a")
+
+rm(WT,WTs,WTss,WTHTOs)
+rm(KO,KOs,KOss,KOHTOs)
+gc()
+#Adding the meta data about the mouse ID each cell was derived from.
+mID <- paste(m.ct2a$Genotype,m.ct2a$HTO_maxID,sep = "_")
+m.ct2a[["MouseID"]] <- mID
+table(m.ct2a$MouseID)
+```
+## III. Quality Control 
+### Percentage of reads mapping to Mitochondrial Genome
+To further filter our data set we used a dataset of murine mitchondrial genes, whose high expression in any given single cell is an indication of low-quality and cell death. Mouse MitoCarta3.0 downloaded from the Broad Institute's [MITOCARTA3.0: AN INVENTORY OF MAMMALIAN MITOCHONDRIAL PROTEINS AND PATHWAYS](https://www.broadinstitute.org/mitocarta/mitocarta30-inventory-mammalian-mitochondrial-proteins-and-pathways). It is an excel file containing information on 1140 MitoCarta mouse genes including evidence of mitochondrial protein localization and protein distribution across 14 tissues. Please download this file, and place it in your working directory to proceed with analysis.
+
+```{r}
+MitoCarta <- read_xls("Mouse.MitoCarta3.0.xls", sheet = 2, range = "C1:C894",col_names = T)
+i <- MitoCarta$Symbol %in% rownames(m.ct2a)
+MitoSymbols <- MitoCarta$Symbol[i]
+
+#Adding a new object meta data column for mitochondrial gene percentage 
+m.ct2a[["percent.mt"]] <- PercentageFeatureSet(m.ct2a, features = MitoSymbols)
+
+#Visualization of QC metrics
+VlnPlot(m.ct2a, features =  c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+```{r}
+#feature-feature plot 
+plot1 <- FeatureScatter(m.ct2a, feature1 = "nCount_RNA", feature2 = "percent.mt") + theme(axis.text.x = element_text(angle = 90))
+plot2 <- FeatureScatter(m.ct2a, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") + theme(axis.text.x = element_text(angle = 90))
+plot1 + plot2 
+```
+We now make use of the isOutlier function from [Single Cell Experiment](https://bioconductor.org/packages/release/bioc/html/SingleCellExperiment.html) (Amezquita et al) to further clean the data. We create an sce object from our Seurat object and then filter our original Seurat object after filtering the sce object. 
+```{r, message = FALSE, warning = FALSE, results = 'hide'}
+m.ct2a.sce <- as.SingleCellExperiment(m.ct2a)
+
+df <- data.frame(NExprs = m.ct2a.sce$nFeature_RNA, LibSize = m.ct2a.sce$nCount_RNA, MitoProp = m.ct2a.sce$percent.mt)
+df <- (as.data.frame(df))
+df[,1] <- as.numeric(df$NExprs)
+
+qc.lib1 <- isOutlier(log(df$LibSize), type = "lower")
+attr(qc.lib1, "threshold")
+
+qc.lib2 <- isOutlier(log(df$LibSize), type = "higher")
+attr(qc.lib2, "threshold")
+
+qc.nexp1 <- isOutlier(log(df$NExprs), type = "lower")
+attr(qc.nexp1, "threshold")
+
+qc.nexp2 <- isOutlier(log(df$NExprs), type = "higher")
+attr(qc.nexp2, "threshold")
+
+qc.mito <- isOutlier(df$MitoProp, type = "higher")
+attr(qc.mito, "threshold")
+
+discard <- qc.lib1 | qc.lib2 | qc.nexp1 | qc.nexp2 | qc.mito
+
+i <- Cells(m.ct2a)[!discard]
+m.ct2a <- subset(m.ct2a, cells = i) #the subset of the cells post-QC
+```
+### Cell Cycle Scoring 
+Here we convert the mouse gene names to human gene names for the purposes of analysis and inference using the [biomaRt databases](https://bioconductor.org/packages/release/bioc/html/biomaRt.html) and [function](https://ucdavis-bioinformatics-training.github.io/2020-Intro_Single_Cell_RNA_Seq/data_analysis/scRNA_Workshop-PART2_fixed ).
+```{r}
+#BiocManager::install('grimbough/biomaRt')
+
+convertHumanGeneList <- function(x){
+  require("biomaRt")
+  human = useMart("ensembl", dataset = "hsapiens_gene_ensembl", host ="https://dec2021.archive.ensembl.org/")
+  mouse = useMart("ensembl", dataset = "mmusculus_gene_ensembl", host ="https://dec2021.archive.ensembl.org/")
+  genesV2 = getLDS(attributes = c("hgnc_symbol"), filters = "hgnc_symbol", values = x , mart = human, attributesL = c("mgi_symbol"), martL = mouse, uniqueRows=T)
+  humanx <- unique(genesV2[, 2])
+  # Print the first 6 genes found to the screen
+  print(head(humanx))
+  return(humanx)
+}
+
+s.genes <- convertHumanGeneList(cc.genes.updated.2019$s.genes) 
+g2m.genes <- convertHumanGeneList(cc.genes.updated.2019$g2m.genes) 
+```
+Scoring cell cyles phases with [CellCycleScoring](https://satijalab.org/seurat/reference/cellcyclescoring) utilizing the converted genes from above.
+```{r}
+m.ct2a <- CellCycleScoring(m.ct2a, s.features = s.genes, g2m.features = g2m.genes)
+length(m.ct2a@assays$RNA@counts@Dimnames[[1]])
+```
+## IV. Clustering 
+In this section, we follow a standard Seurat clustering workflow which includes normalization, feature selection, scaling, dimensionality reduction, and clustering. Using the [SCTransform](https://satijalab.org/seurat/articles/sctransform_vignette.html) function, which utilizes a novel approach to normalization which enables the recovery of clearer biological distinction compared to standard log-normalization. 
+```{r, message = FALSE, warning = FALSE, results = 'hide'}
+m.ct2a <- SCTransform(m.ct2a, vars.to.regress = c("percent.mt", "S.Score", "G2M.Score"))
+```
+
+Principal Component Analysis for gene features of m.ct2a
+```{r, message = FALSE, warning = FALSE, results = 'hide'}
+m.ct2a <- RunPCA(m.ct2a)
+```
+The elbow plot allows us to see how much variance is explained by each PC; here the majority of the variance is captured within the first 30 PCs.
+```{r, message = FALSE, warning = FALSE}
+ElbowPlot(m.ct2a, ndims = 50)
+```
+```{r fig.width = 6, fig.height=40}
+DimHeatmap(m.ct2a, dims = 1:30, cells = 500)
+```
+
+Performing integrated analysis on the object.
+```{r, message = FALSE, warning = FALSE, results = 'hide'}
+m.ct2a <- FindNeighbors(m.ct2a,dims = 1:30)
+```
+Uniform Manifold Approximation (UMAP)
+```{r, message = FALSE, warning = FALSE, results = 'hide'}
+m.ct2a <- RunUMAP(m.ct2a, dims = 1:30)
+```
+Clustering, Normalization, and Scaling
+```{r, message = FALSE, warning = FALSE, results = 'hide'}
+m.ct2a <- FindClusters(m.ct2a, resolution = .5)
+m.ct2a <- NormalizeData(m.ct2a, normalization.method = "LogNormalize", scale.factor = 10000, assay = "RNA")
+all.genes <- rownames(m.ct2a)
+m.ct2a <- ScaleData(m.ct2a, features = all.genes, assay = "RNA")
+```
+
+## V. Cell-Type Annotation
+We then used the [FindConservedMarkers](https://satijalab.org/seurat/reference/findconservedmarkers) function to ascertain conserved gene markers between cell types compared to other cell types.
+```{r, message = FALSE, warning = FALSE, results = 'hide'}
+
+DefaultAssay(m.ct2a) <- "RNA"
+
+markers <- lapply(c(0:(length(levels(Idents(m.ct2a)))-1)), function(i){
+  FindConservedMarkers(m.ct2a, ident.1 = i, grouping.var = "Genotype", verbose = T, test.use = "MAST")
+})
+```
+The [FindMarkers](https://satijalab.org/seurat/reference/findmarkers) to identify differentially expressed markers between cell types. 
+```{r}
+markers[[1]][1:75,1:10]
+```
+### NK Cells
+We then plotted features of interest for theorized cluster identities, starting with NK cells. 
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p1 = FeaturePlot(m.ct2a,features = "Ncr1")
+p2 = FeaturePlot(m.ct2a,features = "Klrb1c")
+p3 = FeaturePlot(m.ct2a,features = "Gzma")
+p4 = FeaturePlot(m.ct2a,features = "Txk")
+p5 = FeaturePlot(m.ct2a,features = "Prf1")
+grid.arrange(p1, p2, p3, p4, p5, nrow = 2)
+```
+
+### Apoe+ TAMs
+```{r fig.asp = .8, fig.width = 10, fig.height = 5, echo = FALSE}
+p6 = FeaturePlot(m.ct2a,features = "Apoe")
+p7 = FeaturePlot(m.ct2a,features = "Trem2")
+p8 = FeaturePlot(m.ct2a,features = "Mrc1")
+p9 = FeaturePlot(m.ct2a,features = "Spint1")
+p10 = FeaturePlot(m.ct2a,features = "Spp1")
+p11 = FeaturePlot(m.ct2a,features = "Itga6")
+p12 = FeaturePlot(m.ct2a,features = "Cd63")
+p13 = FeaturePlot(m.ct2a,features = "Mertk")
+p14 = FeaturePlot(m.ct2a,features = "Adgre1")
+grid.arrange(p6, p7, p8, p9, p10, p11, p12, p13, p14, nrow = 3)
+```
+
+### DC-like TAMs
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p26 = FeaturePlot(m.ct2a,features = "H2-Eb1")
+p27 = FeaturePlot(m.ct2a,features = "H2-Ab1")
+p28 = FeaturePlot(m.ct2a,features = "H2-Aa")
+p29 = FeaturePlot(m.ct2a,features = "Stat1")
+p30 = FeaturePlot(m.ct2a,features = "Irf7")
+p31 = FeaturePlot(m.ct2a,features = "Cd74")
+p32 = FeaturePlot(m.ct2a,features = "Ccl5")
+p33 = FeaturePlot(m.ct2a,features = "Cxcl9")
+p34 = FeaturePlot(m.ct2a,features = "Mertk")
+p35 = FeaturePlot(m.ct2a,features = "Adgre1")
+p36 = FeaturePlot(m.ct2a,features = "Cxcl10")
+grid.arrange(p26, p27, p28, p29, p30, p31, p32, p33, p34, p35, p36, nrow = 3)
+```
+
+### cMono Cells
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p37 = FeaturePlot(m.ct2a,features = "Vcan")
+p38 = FeaturePlot(m.ct2a,features = "Ly6c2")
+p39 = FeaturePlot(m.ct2a,features = "Il1b")
+p40 = FeaturePlot(m.ct2a,features = "Itgal")
+p41 = FeaturePlot(m.ct2a,features = "Ccl9")
+p42 = FeaturePlot(m.ct2a,features = "Lyz2")
+p43 = FeaturePlot(m.ct2a,features = "Chil3")
+p44 = FeaturePlot(m.ct2a,features = "Cd44")
+grid.arrange(p37, p38, p39, p40, p41, p42, p43, p44, nrow = 3)
+```
+
+### CD8 TILs
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p45 = FeaturePlot(m.ct2a,features = "Cd8a")
+p46 = FeaturePlot(m.ct2a,features = "Cd3e")
+p47 = FeaturePlot(m.ct2a,features = "Cxcr6")
+p48 = FeaturePlot(m.ct2a,features = "Ifng")
+p49 = FeaturePlot(m.ct2a,features = "Tox")
+p50 = FeaturePlot(m.ct2a,features = "Pdcd1")
+p51 = FeaturePlot(m.ct2a,features = "Ctla4")
+p52 = FeaturePlot(m.ct2a,features = "Lag3")
+p53 = FeaturePlot(m.ct2a,features = "Klrc1")
+p54 = FeaturePlot(m.ct2a,features = "Havcr2") #Tim3
+grid.arrange(p45, p46, p47, p48, p49, p50, p51, p52, p53, p54, nrow = 3)
+```
+
+### Microglia
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p55 = FeaturePlot(m.ct2a,features = "P2ry12")
+p56 = FeaturePlot(m.ct2a,features = "Sall1")
+p57 = FeaturePlot(m.ct2a,features = "Crybb1")
+p58 = FeaturePlot(m.ct2a,features = "Sparc")
+p59 = FeaturePlot(m.ct2a,features = "Csf1r")
+p60 = FeaturePlot(m.ct2a,features = "Aif1")
+p61 = FeaturePlot(m.ct2a,features = "Tmem119")
+p62 = FeaturePlot(m.ct2a,features = "Cd34")
+grid.arrange(p55, p56, p57, p58, p59, p60, p61, p62, nrow = 3)
+```
+
+### DC2
+```{r fig.asp = .8, fig.width = 10, fig.height = 1, echo = FALSE}
+p63 = FeaturePlot(m.ct2a,features = "Flt3")
+p64 = FeaturePlot(m.ct2a,features = "Itgax")
+p65 = FeaturePlot(m.ct2a,features = "Ccl17")
+p66 = FeaturePlot(m.ct2a,features = "Ffar2")
+p67 = FeaturePlot(m.ct2a,features = "H2-DMb2")
+p68 = FeaturePlot(m.ct2a,features = "Zbtb46")
+grid.arrange(p63, p64, p65, p66, p67, p68, nrow = 2)
+```
+
+### Stem-Like TILs
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p69 = FeaturePlot(m.ct2a,features = "Cd4")
+p70 = FeaturePlot(m.ct2a,features = "Cd8a")
+p71 = FeaturePlot(m.ct2a,features = "Trgc4")
+p72 = FeaturePlot(m.ct2a,features = "Rora")
+p73 = FeaturePlot(m.ct2a,features = "Icos")
+p74 = FeaturePlot(m.ct2a,features = "Tcf7")
+p75 = FeaturePlot(m.ct2a,features = "Il7r")
+p76 = FeaturePlot(m.ct2a,features = "Slamf6")
+grid.arrange(p69, p70, p71, p72, p73, p74, p75, p76, nrow = 3)
+```
+
+### CD4 TILs
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p77 = FeaturePlot(m.ct2a,features = "Cd4")
+p78 = FeaturePlot(m.ct2a,features = "Cxcr3")
+p79 = FeaturePlot(m.ct2a,features = "Foxp3")
+p80 = FeaturePlot(m.ct2a,features = "Il10")
+p81 = FeaturePlot(m.ct2a,features = "Klrg1")
+p82 = FeaturePlot(m.ct2a,features = "Ctla4")
+p83 = FeaturePlot(m.ct2a,features = "Icos")
+p84 = FeaturePlot(m.ct2a,features = "Ccr8")
+grid.arrange(p77, p78, p79, p80, p81, p82, p83, p84, nrow = 3)
+```
+
+### B Cells
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p85 = FeaturePlot(m.ct2a,features = "Cd19")
+p86 = FeaturePlot(m.ct2a,features = "Cd79a")
+p87 = FeaturePlot(m.ct2a,features = "Fcmr")
+p88 = FeaturePlot(m.ct2a,features = "Pax5")
+p89 = FeaturePlot(m.ct2a,features = "Ebf1")
+p90 = FeaturePlot(m.ct2a,features = "Iglc2")
+grid.arrange(p85, p86, p87, p88, p89, p90, nrow = 2)
+```
+
+### Nos2+ TAMs
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p91 =FeaturePlot(m.ct2a,features = "Nos2")
+p92 =FeaturePlot(m.ct2a,features = "Arg1")
+p93 =FeaturePlot(m.ct2a,features = "Vegfa")
+p94 =FeaturePlot(m.ct2a,features = "Mmp12")
+p95 =FeaturePlot(m.ct2a,features = "Egln3")
+p96 =FeaturePlot(m.ct2a,features = "Mertk")
+p97 =FeaturePlot(m.ct2a,features = "Adgre1")
+p98 =FeaturePlot(m.ct2a,features = "Hilpda")
+p99 =FeaturePlot(m.ct2a,features = "Id2")
+grid.arrange(p91, p92, p93, p94, p95, p96, p97, p98, p99, nrow = 3)
+```
+
+### non cMono
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p100 =FeaturePlot(m.ct2a,features = "Ace")
+p101 =FeaturePlot(m.ct2a,features = "Adgre4")
+p102 =FeaturePlot(m.ct2a,features = "Ear2")
+p103 =FeaturePlot(m.ct2a,features = "Fabp4")
+p104 =FeaturePlot(m.ct2a,features = "Pparg")
+p105 =FeaturePlot(m.ct2a,features = "Dnah12")
+p106 =FeaturePlot(m.ct2a,features = "Cd36")
+p107 =FeaturePlot(m.ct2a,features = "Ceacam1")
+p108 =FeaturePlot(m.ct2a,features = "Spn") #Cd43
+grid.arrange(p100, p101, p102, p103, p104, p105, p106, p107, p108, nrow = 4)
+
+```
+
+### DC3
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p109 =FeaturePlot(m.ct2a,features = "Batf3")
+p110 =FeaturePlot(m.ct2a,features = "Ccl22")
+p111 =FeaturePlot(m.ct2a,features = "Ramp3")
+p112 =FeaturePlot(m.ct2a,features = "Zbtb46")
+p113 =FeaturePlot(m.ct2a,features = "Il12b")
+p114= FeaturePlot(m.ct2a,features = "Ccr7")
+p115 =FeaturePlot(m.ct2a,features = "Fscn1")
+p116 =FeaturePlot(m.ct2a,features = "Sema7a")
+p117 =FeaturePlot(m.ct2a,features = "Flt3")
+p118 =FeaturePlot(m.ct2a,features = "Cd70")
+p119 =FeaturePlot(m.ct2a,features = "Stat4")
+grid.arrange(p109, p110, p111, p112, p113, p114, p115, p116, p117, p118, p119, nrow = 4)
+
+```
+
+### DC1
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p120 =FeaturePlot(m.ct2a,features = "Xcr1")
+p121 =FeaturePlot(m.ct2a,features = "Snx22")
+p122 =FeaturePlot(m.ct2a,features = "Clec9a")
+p123 =FeaturePlot(m.ct2a,features = "Cd24a")
+p124 =FeaturePlot(m.ct2a,features = "Tlr3")
+p125 =FeaturePlot(m.ct2a,features = "Batf3")
+p126 =FeaturePlot(m.ct2a,features = "Itgae")
+grid.arrange(p120, p121, p122, p123, p124, p125, p126, nrow = 3)
+
+```
+
+### pDC
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p127 =FeaturePlot(m.ct2a,features = "Klk1")
+p128 =FeaturePlot(m.ct2a,features = "Ccr9")
+p129 =FeaturePlot(m.ct2a,features = "Tcf4")
+p130 =FeaturePlot(m.ct2a,features = "Flt3")
+p131 =FeaturePlot(m.ct2a,features = "Siglech")
+p132 =FeaturePlot(m.ct2a,features = "Bcl11a")
+grid.arrange(p127, p128, p129, p130, p131, p132, nrow = 2)
+
+```
+
+### Basophils
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p133 =FeaturePlot(m.ct2a,features = "Il4")
+p134 =FeaturePlot(m.ct2a,features = "Gata2")
+p135 =FeaturePlot(m.ct2a,features = "Ms4a2")
+p136 =FeaturePlot(m.ct2a,features = "Fcer1a")
+p137 =FeaturePlot(m.ct2a,features = "Il13")
+p138 =FeaturePlot(m.ct2a,features = "Slc18a2")
+p139 =FeaturePlot(m.ct2a,features = "Il6")
+p140 =FeaturePlot(m.ct2a,features = "Cxcr2")
+grid.arrange(p133, p134, p135, p136, p137, p138, p139, p140, nrow = 3)
+```
+
+### Neutrophils 
+```{r fig.asp = .8, fig.width = 15, fig.height = 5, echo = FALSE}
+p141 = FeaturePlot(m.ct2a,features = "S100a9")
+p142 = FeaturePlot(m.ct2a,features = "Mmp9")
+p143 = FeaturePlot(m.ct2a,features = "Ly6g")
+p144 = FeaturePlot(m.ct2a,features = "Retnlg")
+p145 = FeaturePlot(m.ct2a,features = "Stfa2l1")
+grid.arrange(p141, p142, p143, p144, p145, nrow = 3)
+```
+
+### Assigning Identity 
+Assigning cell type names to each of the clusters
+```{r, warning=FALSE, message=FALSE}
+new.cluster.ids <- c("Apoe+ TAM", "DC-like TAM","NK Cell","cMono","CD8 TIL","Microglia","DC2","Stem-Like TIL","CD4 TIL","B Cell","Nos2+ TAM","non-cMono","DC3","Debris","DC1","pDC","Baso","Neut")
+m.ct2a[["orig_clust"]] <- Idents(m.ct2a)
+names(new.cluster.ids) <- levels(m.ct2a)
+m.ct2a <- RenameIdents(m.ct2a,new.cluster.ids)
+```
+Removing "Debris" from the Seurat Object 
+```{r, warning=FALSE, message=FALSE}
+debri <- which(Idents(m.ct2a) == "Debris")
+i <- Cells(m.ct2a)[debri]
+m.ct2a <- m.ct2a[,!colnames(m.ct2a) %in% i]
+```
+Adding the identity list as levels to the Seurat Object followed by the addition of "Cell.Type" and "Geno.Ident" meta data columns.
+```{r, warning=FALSE, message=FALSE}
+levels(m.ct2a) <- c("Apoe+ TAM","DC-like TAM","Nos2+ TAM","Microglia",
+                    "cMono","non-cMono","Neut","Baso",
+                    "DC1","DC2","DC3","pDC",
+                    "B Cell","NK Cell","CD8 TIL","CD4 TIL","Stem-Like TIL")
+
+m.ct2a[["Cell.Type"]] <- Idents(m.ct2a)
+m.ct2a[["Geno.Ident"]] <- paste(m.ct2a$Genotype,m.ct2a$Cell.Type,sep = "_")
+```
+The visualization of the annotated clusters. For information on how we manually validated these cluster identities, see the vignette "Utilizing a Heatmap to validate single-cell cluster identities with user-selected Marker Genes". 
+```{r, warning=FALSE, message=FALSE}
+DimPlot(m.ct2a,label = T, repel = T)
+```
+
+At this stage we save the Seurat object and proceed to visualization. 
+
+```{r, message = FALSE, warning = FALSE, results = 'hide'}
+saveRDS(m.ct2a, "m_ct2a.rds")
+```
+
+The saved seurat object used in the paper is additionally available under zenodo accession [6654420](https://zenodo.org/record/6654420).

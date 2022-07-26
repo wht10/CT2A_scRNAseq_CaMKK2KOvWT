@@ -1,0 +1,645 @@
+---
+title: "Cell-Cell Communication Analysis"
+author: "William Tomaszeswki, Jonathan Perera"
+date: '`r Sys.Date()`'
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## I. Setup
+## 
+This vignette reproduces the the cell-cell communication analysis conducted in our study (insert citation) on the role of calcium signaling in Glioblastoma. The analysis was conducted utilizing [Cell Chat](http://www.cellchat.org). Before beginning create a directory in which you place the .rds object, and create two sub-directories titled "cc.KO" and "cc.WT"
+
+```{r packages, message = FALSE, warning = FALSE}
+#install.packages("NMF")
+#library("devtools")
+#devtools::install_github("jokergoo/circlize")
+#devtools::install_github("jokergoo/ComplexHeatmap")
+#devtools::install_github("sqjin/CellChat")
+
+library("CellChat")
+library(tictoc)
+library(patchwork)
+options(stringsAsFactors = FALSE)
+library(Seurat)
+library(ggalluvial)
+```
+
+##
+Loading in the Seurat Object. After which, we set the object's identities to "Cell.Type" and Normalize the data. If you'd like to start from a matrix instead or for a full explanation of load-in procedure, please refer to [Cell Chat documentation](https://htmlpreview.github.io/?https://github.com/sqjin/CellChat/blob/master/tutorial/Interface_with_other_single-cell_analysis_toolkits.html)
+
+The Seurat object from the QC.rmd can be accessed under zenodo accession [6654420](https://zenodo.org/record/6654420).
+
+```{r message = FALSE, warning = FALSE}
+download_zenodo("10.5281/zenodo.6654420",files = "Processed_CD45_Live_Fig2b.rds")
+m.ct2a <- readRDS("Processed_CD45_Live_Fig2b.rds")
+Idents(m.ct2a) <- m.ct2a$Cell.Type
+m.ct2a <- NormalizeData(m.ct2a, normalization.method = "LogNormalize", scale.factor = 10000, assay = "RNA")
+```
+
+
+For this analysis, per the focus of the original project, we subdivide the data set by 'Genotype' (Wildtype Mouse vs CaMKK2 Knock-Out Mouse). We can then load each of these separately as CellChat Objects. Since we are using a Seurat Object, the meta data is used by default and we must explicitly instruct the function to 'group.by = "ident"'.
+```{r message = FALSE, warning = FALSE}
+m.ct2a.WT <- subset(m.ct2a, subset = Genotype == "WT") # Wildtype
+m.ct2a.KO <- subset(m.ct2a, subset = Genotype == "Camkk2KO") # CaMKK2 KO
+rm("m.ct2a")
+gc()
+```
+
+```{r c1a, results = "hide",  message = FALSE, warning = FALSE}
+cc.KO <- createCellChat(m.ct2a.KO,group.by = "ident")
+cc.WT <- createCellChat(m.ct2a.WT,group.by = "ident")
+rm(m.ct2a.KO)
+rm(m.ct2a.WT)
+gc() #automatically releases memory when an object is no longer in use
+```
+
+Here we utilize CellChat's manually curated, bona fide database of murine ligand-receptor interactions which contains "2,021 validated molecular interactions, including 60% of secrete autocrine/paracrine signaling interactions, 21% of extracellular matrix (ECM)-receptor interactions and 19% of cell-cell contact interactions". 
+
+```{r c2b, message = FALSE, warning = FALSE}
+ccDB <- CellChatDB.mouse
+showDatabaseCategory(ccDB)
+```
+## I. Analysis for Wild-type 
+Here we can see cell-type identities present as well as the corresponding number of cells for each. 
+```{r, message = FALSE, warning = FALSE}
+levels(cc.WT@idents)
+groupSize <- as.numeric(table(cc.WT@idents))
+groupSize
+```
+Subset the expression data of signaling genes to save computational cost and time
+```{r, message = FALSE, warning = FALSE}
+cc.WT@DB <- ccDB
+cc.WT <- subsetData(cc.WT) 
+```
+Here we pre-process the expression data for downstream cell-cell communication analysis. Over-expressed ligands or receptors in one cell type are identified and then idenity and analyze over-expressed ligands- receptors in that cell type if either one is over-expressed. This is to infer cell state-specific expression. For more detailed documentation on the following method and analyses please refer to  [Inference and analysis of cell-cell communication using CellChat](https://htmlpreview.github.io/?https://github.com/sqjin/CellChat/blob/master/tutorial/CellChat-vignette.html)
+```{r, message = FALSE, warning = FALSE}
+library(future)
+future::plan("multiprocess", workers = 4) # do parallel
+cc.WT <- identifyOverExpressedGenes(cc.WT)
+cc.WT <- identifyOverExpressedInteractions(cc.WT)
+```
+### Inferring and analyzing cell-cell communication network
+A cell-cell communication network based on a probability value for every potential cell-cell interaction in the data set. These probability values are calculated based on the integration of the gene expression data with bona fide signaling ligands, receptors and their cofactors (based on the law of mass action). Calculating the number of inferred ligand-receptor pairs is based on first calculating average gene expression per cell type.  
+```{r, message = FALSE, warning = FALSE, results = "hide"}
+tic()
+cc.WT <- computeCommunProb(cc.WT, raw.use = T) #Compute communication probability and inferring the cellular communication network
+toc()
+```
+Computing the probability of a signaling pathway by summarizing probabilities of all ligand-receptor interactions that are a part of that pathway.
+```{r, message = FALSE, warning = FALSE}
+cc.WT <- computeCommunProbPathway(cc.WT)
+```
+Aggregating the cell-cell communication network by summing the number of total links
+```{r, message = FALSE, warning = FALSE}
+cc.WT <- aggregateNet(cc.WT)
+pathways.show.all <- cc.WT@netP$pathways
+pathways.show.all
+```
+Computing and visualizing the contribution of each ligand-receptor pair to the overall signaling pathway. This will save the visualizations in your 'cc.WT' folder.
+```{r, message = FALSE, warning=FALSE}
+setwd("cc.WT")
+
+for (i in 1:length(pathways.show.all)) {
+  
+  gg <- netAnalysis_contribution(cc.WT, signaling = pathways.show.all[i])
+  ggsave(filename=paste0(pathways.show.all[i], "_L-R_contribution.pdf"), plot=gg, width = 5, height = 2, units = 'in', dpi = 300)
+}
+```
+Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways. Computing centrality measures to be able to indentify dominant senders, receivers, meidators, and influencers.
+```{r, message = FALSE, warning = FALSE}
+cc.WT <- netAnalysis_computeCentrality(cc.WT, slot.name = "netP")
+``` 
+### Visualization and Analysis of cell-cell communication network 
+Visualizing dominant senders and receivers.
+```{r, message = FALSE, warning = FALSE}
+gg1 <- netAnalysis_signalingRole_scatter(cc.WT)
+gg1 + ggtitle("WT Interaction Strength")
+```
+Heatmap that helps identify signals most contributing to outgoing or incoming cell-type specific signaling.
+```{r fig.align = "center", fig.height = 12, fig.width = 12, out.width = "10in", warning = FALSE, message = FALSE}
+ht1 <- netAnalysis_signalingRole_heatmap(cc.WT, pattern = "outgoing", height = 20)
+ht2 <- netAnalysis_signalingRole_heatmap(cc.WT, pattern = "incoming", height = 20)
+ht1 + ht2 
+```
+### Identifying global communication patterns 
+We investigated how various signaling pathways interacted and coordinated in order to fulfill their roles. We first investigated "outgoing" patterns; these elucidate the coordination between senders cells and signaling pathways to drive communication.
+
+```{r fig.align = "center", fig.height = 12, fig.width = 8, out.width = "10in", warning = FALSE, message = FALSE}
+library(NMF)
+library(ggalluvial)
+tic()
+selectK(cc.WT,pattern = "outgoing") #inferring number of patterns 
+toc()
+nPatterns = 3
+dev.off()
+cc.WT <- identifyCommunicationPatterns(cc.WT,pattern = "outgoing",k = nPatterns, height = 17)
+```
+Creating river alluvial plots to display underlying patterns with cell groups and ligand-receptor pairs or signaling pathways for outgoing cell groups from the WT mouse. 
+```{r  fig.align = "center", fig.height = 12, fig.width = 8, out.width = "15in", message = FALSE, warning = FALSE}
+netAnalysis_river(cc.WT,pattern = "outgoing", font.size = 4, cutoff = .7)
+```
+Creating dot plots to display outgoing communication patterns of secreting cells from the WT mouse. 
+```{r fig.align = "center", fig.height = 5, fig.width = 12, out.width = "10in", message = FALSE, warning = FALSE}
+netAnalysis_dot(cc.WT, pattern = "outgoing", font.size = 12) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+Similar analyses was conducted for "incoming" patterns for target/receiver cells from the WT mouse. Again we are elucidating the mechanisms of coordination between these cells as well as their signaling pathways. 
+```{r fig.align = "center", fig.height = 12, fig.width = 8, out.width = "10in", warning = FALSE, message = FALSE}
+tic()
+selectK(cc.WT,pattern = "incoming")
+toc()
+nPatterns = 3
+dev.off()
+cc.WT <- identifyCommunicationPatterns(cc.WT,pattern = "incoming",k = nPatterns, height = 18)
+```
+Creating river alluival plots to display underlying patterns with cell groups and ligand-receptor pairs or signaling pathways for incoming cell groups from the WT mouse.
+```{r fig.align = "center", fig.height = 12, fig.width = 8, out.width = "15in", message = FALSE, warning = FALSE}
+netAnalysis_river(cc.WT,pattern = "incoming", font.size = 4, cutoff = .7)
+```
+Creating dot plots to display incoming communication patterns of target cells for cells from the WT mouse. 
+```{r fig.align = "center", fig.height = 5, fig.width = 12, out.width = "10in", message = FALSE, warning = FALSE}
+netAnalysis_dot(cc.WT, pattern = "incoming", font.size = 12) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+ 
+```{r, message = FALSE, warning = FALSE}
+setwd("../")
+saveRDS(cc.WT,"cc.WT.np.rds")
+while (!is.null(dev.list()))  dev.off()
+```
+
+## III. Analysis for CaMKK2 KO Object
+Following the same workflow as for the WT object, processed and analyzed the CaMKK2 KO object. Here we can see cell-type identities present as well as the coresponding number of cells for each.
+```{r c3, message = FALSE, warning = FALSE}
+levels(cc.KO@idents)
+groupSize <- as.numeric(table(cc.KO@idents))
+groupSize
+```
+Loading the data base of bona-fide murine ligand-receptor interactions. 
+```{r, message = FALSE, warning = FALSE}
+ccDB <- CellChatDB.mouse #Loading the mouse database. 
+cc.KO@DB <- ccDB
+cc.KO <- subsetData(cc.KO) # subset the expression data of signaling genes for saving computation cost
+```
+Inferring cell state-specific expression
+```{r, message = FALSE, warning = FALSE}
+library(future)
+future::plan("multiprocess", workers = 4) # do parallel
+cc.KO <- identifyOverExpressedGenes(cc.KO)
+cc.KO <- identifyOverExpressedInteractions(cc.KO)
+```
+Computing cell-cell interaction probability, signaling pathway probability and aggregtaing total links.
+```{r, message = FALSE, warning = FALSE}
+tic()
+cc.KOnp <- computeCommunProb(cc.KO, raw.use = T,population.size = F)
+cc.KO <- computeCommunProb(cc.KO, raw.use = T,population.size = T)
+toc()
+cc.KO <- computeCommunProbPathway(cc.KOnp)
+cc.KO <- aggregateNet(cc.KO)
+
+pathways.show.all <- cc.KO@netP$pathways
+
+```
+Computing and visualizing the network associated with (1) signaling pathway and L-R pairs contribution of each individual ligand-receptor pair to the overall signaling pathway and (2) the contribution of each ligand-receptor pair to the overall signaling pathway. This will save the visualizations in your 'cc.KO' folder.
+```{r, message = FALSE, warning = FALSE, results = "hide"}
+setwd("cc.KO")
+for (i in 1:length(pathways.show.all)) {
+  # Visualize communication network associated with both signaling pathway and individual L-R pairs
+  pdf(paste0(pathways.show.all[i], "_net_heatmap.pdf"), width = 6, height = 6)
+  print(netVisual_heatmap(cc.KO, signaling = pathways.show.all[i], color.heatmap = "Reds"))
+  dev.off()
+  # Compute and visualize the contribution of each ligand-receptor pair to the overall signaling pathway
+  gg <- netAnalysis_contribution(cc.KO, signaling = pathways.show.all[i])
+  ggsave(filename=paste0(pathways.show.all[i], "_L-R_contribution.pdf"), plot=gg, width = 5, height = 2, units = 'in', dpi = 300)
+}
+```
+Computing centrality measures for the purposes of continuing signaling role analysis on the aggregated cell-cell communication network from all signaling pathways as well as signaling role analysis on the cell-cell communication networks of interest.
+```{r, message = FALSE, warning = FALSE}
+cc.KO <- netAnalysis_computeCentrality(cc.KO, slot.name = "netP")
+```
+Visualizing dominant senders and receivers.
+```{r message = FALSE, warning = FALSE}
+gg2 <- netAnalysis_signalingRole_scatter(cc.KO) 
+gg2 + ggtitle("Camkk2 KO Interaction Strength") 
+```
+Heatmap that helps identify signals most contributing to outgoing or incoming cell-type specific signaling.
+```{r fig.align = "center", fig.height = 12, fig.width = 12, out.width = "10in", warning = FALSE, message = FALSE}
+ht3 <- netAnalysis_signalingRole_heatmap(cc.KO, pattern = "outgoing", height = 20)
+ht4 <- netAnalysis_signalingRole_heatmap(cc.KO, pattern = "incoming", height = 20)
+ht3 + ht4
+```
+Global communication patterns to investigate how various signaling pathways interacted and coordinated in order to fulfill their roles for cells that were CaMKK2 deficient. Here we first elucidated "outgoing" patterns that explore the coordination between senders cells and signaling pathways to drive communication.
+```{r fig.align = "center", fig.height = 12, fig.width = 8, out.width = "10in", warning = FALSE, message = FALSE}
+library(NMF)
+library(ggalluvial)
+
+tic()
+selectK(cc.KO,pattern = "outgoing")
+toc()
+
+nPatterns = 2
+dev.off()
+cc.KO <- identifyCommunicationPatterns(cc.KO,pattern = "outgoing",k = nPatterns, height = 18)
+```
+Creating river alluvial plots to display underlying patterns with cell groups and ligand-receptor pairs or signaling pathways for outgoing cell groups from the KO mouse. 
+```{r fig.align = "center", fig.height = 12, fig.width = 8, out.width = "15in", message = FALSE, warning = FALSE}
+netAnalysis_river(cc.KO, pattern = "outgoing", cutoff = .7, font.size = 4)
+```
+Creating dot plots to display outgoing communication patterns of secreting cells from the KO mouse. 
+```{r fig.align = "center", fig.height = 5, fig.width = 12, out.width = "10in", message = FALSE, warning = FALSE}
+netAnalysis_dot(cc.KO, pattern = "outgoing", font.size = 12) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+Global communication analyses was then conducted for "incoming" patterns for target/receiver cells from the WT mouse, elucidating the mechanisms of coordination between these cells as well as their signaling pathways. 
+```{r fig.align = "center", fig.height = 12, fig.width = 8, out.width = "10in", warning = FALSE, message = FALSE}
+tic()
+selectK(cc.KO,pattern = "incoming")
+toc()
+
+nPatterns = 2
+
+dev.off()
+cc.KO <- identifyCommunicationPatterns(cc.KO,pattern = "incoming",k = nPatterns, height = 18)
+```
+Creating river alluival plots to display underlying patterns with cell groups and ligand-receptor pairs or signaling pathways for incoming cell groups from the CaMKK2 KO mouse.
+```{r fig.align = "center", fig.height = 12, fig.width = 8, out.width = "15in", message = FALSE, warning = FALSE}
+netAnalysis_river(cc.KO,pattern = "incoming") 
+```
+Creating dot plots to display incoming communication patterns of target cells for cells from the CaMKK2 KO mouse. 
+```{r fig.align = "center", fig.height = 5, fig.width = 12, out.width = "10in", message = FALSE, warning = FALSE}
+netAnalysis_dot(cc.KO, pattern = "incoming") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+```{r}
+
+saveRDS(cc.KO,"cc.KO.np.rds")
+while (!is.null(dev.list()))  dev.off()
+
+```
+## IV. Comparison of WT and CaMKK2 KO
+The individual objects were then merged and analyzed together to identify and explore differences. These use the previously saved .rds objects from sections II and III. For detailed documentation on the analyses conducted, please refer to [Comparison analysis of multiple datasets using CellChat](https://htmlpreview.github.io/?https://github.com/sqjin/CellChat/blob/master/tutorial/Comparison_analysis_of_multiple_datasets.html); this notebook is modelled structurally after the original analysis. 
+```{r, message = FALSE, warning = FALSE}
+getwd()
+library(CellChat)
+library(patchwork)
+cc.WT <- readRDS("cc.Wt.np.rds")
+cc.KO <- readRDS("cc.KO.np.rds")
+#cellchat <- readRDS("cc.merge.np.rds")
+
+data.dir <- './cc.compare'
+dir.create(data.dir)
+setwd(data.dir)
+
+object.list <- list(WT = cc.WT, Camkk2KO = cc.KO)
+cellchat <- mergeCellChat(object.list, add.names = names(object.list)) # Merging the objects 
+cellchat
+```
+###. Comparison of interactions number and strength between WT and KO 
+To objectively assess whether cell-cell communication was enhanced between the biological conditions (WT and CaMKK2 KO), compared the number of total interactions and interaction strength. 
+```{r, message = FALSE, warning = FALSE}
+gg3 <- compareInteractions(cellchat, show.legend = F, group = c(1,2), size.text = 14)
+gg4 <- compareInteractions(cellchat, show.legend = F, group = c(1,2), measure = "weight",size.text = 14)
+gg3 + gg4
+```
+###. Comparison of interactions number and strength of among cell populations between WT and KO 
+Visualizing the differential interaction strength and number of interctions between the two conditions. Color Key (red: increases,  blue: decreases)
+```{r fig.align = "center", fig.height = 6, fig.width = 10, out.width = "2in"}
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_diffInteraction(cellchat, weight.scale = T)
+netVisual_diffInteraction(cellchat, weight.scale = T, measure = "weight") 
+```
+The following heatmap helps us visualize the above associations with greater granularity.
+```{r fig.align = "center", fig.height = 8, fig.width = 12, out.width = "2in", message = FALSE, warning = FALSE}
+gg5 <- netVisual_heatmap(cellchat,font.size = 18,font.size.title = 18)
+#> Do heatmap based on a merged object
+gg6 <- netVisual_heatmap(cellchat, measure = "weight",font.size = 18,font.size.title = 18)
+#> Do heatmap based on a merged object
+gg5 + gg6
+```
+Computing centrality measures for the purposes of continuing signaling role analysis on the aggregated cell-cell communication network from all signaling pathways as well as signaling role analysis on the cell-cell communication networks of interest. This step may be skipped if Sections II and III of this workflow have already been followed. 
+```{r, message = FALSE, warning = FALSE}
+cc.KO <- netAnalysis_computeCentrality(cc.KO)
+cc.WT <- netAnalysis_computeCentrality(cc.WT)
+object.list <- list(WT = cc.WT, Camkk2KO = cc.KO)
+```
+Then we compared the outgoing and incoming signal strength in 2D allowed us to identify the cellular populations that experienced significant changes in sending and receiving signals. 
+```{r , message = FALSE, warning = FALSE}
+num.link <- sapply(object.list, function(x) {rowSums(x@net$count) + colSums(x@net$count)-diag(x@net$count)})
+weight.MinMax <- c(min(num.link), max(num.link)) # control the dot size in the different datasets
+
+gg <- list()
+for (i in 1:length(object.list)) {
+  gg[[i]] <- netAnalysis_signalingRole_scatter(object.list[[i]], title = names(object.list)[i], weight.MinMax = weight.MinMax)
+}
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+patchwork::wrap_plots(plots = gg)
+```
+### Identification of conserved and context-specific signaling pathways between WT and CaMKK2 KO
+
+```{r fig.align = "center", fig.height = 8, fig.width = 10, out.width = "5in", warning = FALSE}
+gg7 <- rankNet(cellchat, mode = "comparison", stacked = T, do.stat = TRUE)
+gg8 <- rankNet(cellchat, mode = "comparison", stacked = F, do.stat = TRUE)
+gg7 + gg8
+```
+Side-by-side comparison of the outgoing signalling pathways between WT and CaMKK2 KO.
+```{r fig.align = "center", fig.height = 20, fig.width = 10, out.width = "10in", warning = FALSE, message = FALSE}
+library(ComplexHeatmap)
+i = 1
+# combining all the identified signaling pathways from different datasets 
+pathway.union <- union(object.list[[i]]@netP$pathways, object.list[[i+1]]@netP$pathways)
+ht5 = netAnalysis_signalingRole_heatmap(object.list[[i]], pattern = "outgoing", signaling = pathway.union, 
+                                        title = names(object.list)[i], width = 8, height = 37,font.size = 14,font.size.title = 14)
+ht6 = netAnalysis_signalingRole_heatmap(object.list[[i+1]], pattern = "outgoing", signaling = pathway.union, 
+                                        title = names(object.list)[i+1], width = 8, height = 37, font.size = 14, font.size.title = 14)
+draw(ht5 + ht6, ht_gap = unit(0.5, "cm"))
+```
+Side-by-side comparison of the incoming signalling pathways between WT and CaMKK2 KO.
+```{r fig.align = "center", fig.height = 20, fig.width = 10, out.width = "10in", warning = FALSE, message = FALSE}
+ht7 = netAnalysis_signalingRole_heatmap(object.list[[i]], pattern = "incoming", signaling = pathway.union,
+                                        title = names(object.list)[i],width = 8, height = 37, font.size = 14, font.size.title = 14, color.heatmap = "GnBu")
+ht8 = netAnalysis_signalingRole_heatmap(object.list[[i+1]], pattern = "incoming", signaling = pathway.union,
+                                        title = names(object.list)[i+1], width = 8, height = 37, font.size = 14, font.size.title = 14, color.heatmap = "GnBu")
+draw(ht7 + ht8, ht_gap = unit(0.5, "cm"))
+```
+Side-by-side comparison of the all (outgoing, incoming) signalling pathways between WT and CaMKK2 KO.
+```{r fig.align = "center", fig.height = 10, fig.width = 8, out.width = "10in", warning = FALSE, message = FALSE}
+ht9 = netAnalysis_signalingRole_heatmap(object.list[[i]], pattern = "all", signaling = pathway.union, title = names(object.list)[i], width = 6, height = 20, color.heatmap = "OrRd")
+ht10 = netAnalysis_signalingRole_heatmap(object.list[[i+1]], pattern = "all", signaling = pathway.union, title = names(object.list)[i+1], width = 6, height = 20, color.heatmap = "OrRd")
+draw(ht9 + ht10, ht_gap = unit(0.5, "cm"))
+```
+### Identification of upgulated and down-regulated signaling ligand-receptor pairs
+To identify alterations in signaling, we compare communication probabilities. The communication probabilities mediated by ligand-receptor pairs from cell groups to others were compared through a dot plot. 
+```{r fig.align = "center", fig.height = 16, fig.width = 8, message = FALSE, warning = FALSE}
+netVisual_bubble(cellchat, sources.use = c(1,2), targets.use = c(13:17),  comparison = c(1, 2), angle.x = 45) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+
+```{r fig.align = "center", fig.height = 14, fig.width = 10, message = FALSE, warning = FALSE}
+gg9 <- netVisual_bubble(cellchat, sources.use = c(1,2), targets.use = c(13:17),  comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in Camkk2 KO", angle.x = 45, remove.isolate = T) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+gg9
+#> Comparing communications on a merged object
+gg10 <- netVisual_bubble(cellchat, sources.use = c(1,2), targets.use = c(13:17),  comparison = c(1, 2), max.dataset = 1, title.name = "Decreased signaling in Camkk2 KO", angle.x = 45, remove.isolate = T) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#> Comparing communications on a merged object
+gg9 + gg10 
+```
+Another approach to identify dysfunctions in signaling is using differential expression analysis between the conditions of interest (WT and KO) for each cell group. Based on fold-change of ligands in sender cells and receptors in target cells, upregulated and down-regulated signaling. 
+```{r, message = FALSE, warning = FALSE}
+# define a positive dataset, i.e., the dataset with positive fold change against the other dataset
+pos.dataset = "Camkk2KO"
+# define a char name used for storing the results of differential expression analysis
+features.name = pos.dataset
+# perform differential expression analysis
+cellchat <- identifyOverExpressedGenes(cellchat, group.dataset = "datasets", pos.dataset = pos.dataset, features.name = features.name, only.pos = FALSE, thresh.pc = 0.1, thresh.fc = 0.1, thresh.p = 1)
+#> Use the joint cell labels from the merged CellChat object
+# map the results of differential expression analysis onto the inferred cell-cell communications to easily manage/subset the ligand-receptor pairs of interest
+net <- netMappingDEG(cellchat, features.name = features.name)
+# extract the ligand-receptor pairs with upregulated ligands in LS
+net.up <- subsetCommunication(cellchat, net = net, datasets = "Camkk2KO",ligand.logFC = 0.2, receptor.logFC = NULL)
+# extract the ligand-receptor pairs with upregulated ligands and upregulated recetptors in NL, i.e.,downregulated in LS
+net.down <- subsetCommunication(cellchat, net = net, datasets = "WT",ligand.logFC = -0.1, receptor.logFC = -0.1)
+gene.up <- extractGeneSubsetFromPair(net.up, cellchat)
+gene.down <- extractGeneSubsetFromPair(net.down, cellchat)
+```
+Visualization of the upregulated and down-regulated signaling L-R pairs. 
+```{r fig.align = "center", fig.height = 14, fig.width = 10, message = FALSE, warning = FALSE}
+pairLR.use.up = net.up[, "interaction_name", drop = F]
+gg11 <- netVisual_bubble(cellchat, pairLR.use = pairLR.use.up, sources.use = c(1,2), targets.use = c(13:17), comparison = c(1, 2),  angle.x = 90, remove.isolate = T,title.name = paste0("Up-regulated signaling in ", names(object.list)[2]))
+
+#> Comparing communications on a merged object
+pairLR.use.down = net.down[, "interaction_name", drop = F]
+gg12 <- netVisual_bubble(cellchat, pairLR.use = pairLR.use.down, sources.use = c(1,2), targets.use = c(13:17), comparison = c(1, 2),  angle.x = 90, remove.isolate = T,title.name = paste0("Down-regulated signaling in ", names(object.list)[2]))
+#> Comparing communications on a merged object
+gg11 + gg12
+```
+### Visual comparison of cell-cell communication using Heatmaps  
+For a selection of genes below, we visualize and compare the cell-cell communicatio networks through heatmaps. 
+
+#### CXCL
+```{r, message = FALSE, warning = FALSE}
+pathways.show <- c("CXCL") 
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netVisual_heatmap(object.list[[i]], signaling = pathways.show, color.heatmap = "Reds",title.name = paste(pathways.show, "signaling ",names(object.list)[i]))
+}
+#> Do heatmap based on a single object 
+#> 
+#> Do heatmap based on a single object
+ComplexHeatmap::draw(ht[[1]] + ht[[2]], ht_gap = unit(0.5, "cm"))
+
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netAnalysis_contribution(object.list[[i]], signaling = pathways.show, title = paste("Contribution of L-R pair to",pathways.show, "signaling -",names(object.list)[i]))
+}
+ht[[1]] + ht[[2]]
+```
+#### CCL
+```{r, message = FALSE, warning = FALSE}
+
+pathways.show <- c("CCL") 
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netVisual_heatmap(object.list[[i]], signaling = pathways.show, color.heatmap = "Reds",title.name = paste(pathways.show, "signaling ",names(object.list)[i]))
+}
+#> Do heatmap based on a single object 
+#> 
+#> Do heatmap based on a single object
+ComplexHeatmap::draw(ht[[1]] + ht[[2]], ht_gap = unit(0.5, "cm"))
+
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netAnalysis_contribution(object.list[[i]], signaling = pathways.show, title = paste("Contribution of L-R pair to",pathways.show, "signaling -",names(object.list)[i]))
+}
+ht[[1]] + ht[[2]]
+```
+#### IFN-II
+```{r, message = FALSE, warning = FALSE}
+pathways.show <- c("IFN-II") 
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netVisual_heatmap(object.list[[i]], signaling = pathways.show, color.heatmap = "Reds",title.name = paste(pathways.show, "signaling ",names(object.list)[i]))
+}
+#> Do heatmap based on a single object 
+#> 
+#> Do heatmap based on a single object
+ComplexHeatmap::draw(ht[[1]] + ht[[2]], ht_gap = unit(0.5, "cm"))
+
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netAnalysis_contribution(object.list[[i]], signaling = pathways.show, title = paste("Contribution of L-R pair to",pathways.show, "signaling -",names(object.list)[i]))
+}
+ht[[1]] + ht[[2]]
+```
+#### MHC-II
+```{r, message = FALSE, warning = FALSE}
+pathways.show <- c("MHC-II") 
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netVisual_heatmap(object.list[[i]], signaling = pathways.show, color.heatmap = "Reds",title.name = paste(pathways.show, "signaling ",names(object.list)[i]))
+}
+#> Do heatmap based on a single object 
+#> 
+#> Do heatmap based on a single object
+ComplexHeatmap::draw(ht[[1]] + ht[[2]], ht_gap = unit(0.5, "cm"))
+
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netAnalysis_contribution(object.list[[i]], signaling = pathways.show, title = paste("Contribution of L-R pair to",pathways.show, "signaling -",names(object.list)[i]))
+}
+ht[[1]] + ht[[2]]
+```
+#### MHC-I
+```{r, message = FALSE, warning = FALSE}
+pathways.show <- c("MHC-I") 
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netVisual_heatmap(object.list[[i]], signaling = pathways.show, color.heatmap = "Reds",title.name = paste(pathways.show, "signaling ",names(object.list)[i]))
+}
+#> Do heatmap based on a single object 
+#> 
+#> Do heatmap based on a single object
+ComplexHeatmap::draw(ht[[1]] + ht[[2]], ht_gap = unit(0.5, "cm"))
+
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netAnalysis_contribution(object.list[[i]], signaling = pathways.show, title = paste("Contribution of L-R pair to",pathways.show, "signaling -",names(object.list)[i]))
+}
+ht[[1]] + ht[[2]]
+```
+#### CD86
+```{r, message = FALSE, warning = FALSE}
+pathways.show <- c("CD86") 
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netVisual_heatmap(object.list[[i]], signaling = pathways.show, color.heatmap = "Reds",title.name = paste(pathways.show, "signaling ",names(object.list)[i]))
+}
+#> Do heatmap based on a single object 
+#> 
+#> Do heatmap based on a single object
+ComplexHeatmap::draw(ht[[1]] + ht[[2]], ht_gap = unit(0.5, "cm"))
+
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netAnalysis_contribution(object.list[[i]], signaling = pathways.show, title = paste("Contribution of L-R pair to",pathways.show, "signaling -",names(object.list)[i]))
+}
+ht[[1]] + ht[[2]]
+```
+#### ICOS
+```{r, message = FALSE, warning = FALSE}
+pathways.show <- c("ICOS") 
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netVisual_heatmap(object.list[[i]], signaling = pathways.show, color.heatmap = "Reds",title.name = paste(pathways.show, "signaling ",names(object.list)[i]))
+}
+#> Do heatmap based on a single object 
+#> 
+#> Do heatmap based on a single object
+ComplexHeatmap::draw(ht[[1]] + ht[[2]], ht_gap = unit(0.5, "cm"))
+
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netAnalysis_contribution(object.list[[i]], signaling = pathways.show, title = paste("Contribution of L-R pair to",pathways.show, "signaling -",names(object.list)[i]))
+}
+ht[[1]] + ht[[2]]
+```
+#### TNF
+```{r, message = FALSE, warning = FALSE}
+pathways.show <- c("TNF") 
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netVisual_heatmap(object.list[[i]], signaling = pathways.show, color.heatmap = "Reds",title.name = paste(pathways.show, "signaling ",names(object.list)[i]))
+}
+#> Do heatmap based on a single object 
+#> 
+#> Do heatmap based on a single object
+ComplexHeatmap::draw(ht[[1]] + ht[[2]], ht_gap = unit(0.5, "cm"))
+
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netAnalysis_contribution(object.list[[i]], signaling = pathways.show, title = paste("Contribution of L-R pair to",pathways.show, "signaling -",names(object.list)[i]))
+}
+ht[[1]] + ht[[2]]
+```
+#### TGFb
+```{r, message = FALSE, warning = FALSE}
+pathways.show <- c("TGFb") 
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netVisual_heatmap(object.list[[i]], signaling = pathways.show, color.heatmap = "Reds",title.name = paste(pathways.show, "signaling ",names(object.list)[i]))
+}
+#> Do heatmap based on a single object 
+#> 
+#> Do heatmap based on a single object
+ComplexHeatmap::draw(ht[[1]] + ht[[2]], ht_gap = unit(0.5, "cm"))
+
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netAnalysis_contribution(object.list[[i]], signaling = pathways.show, title = paste("Contribution of L-R pair to",pathways.show, "signaling -",names(object.list)[i]))
+}
+ht[[1]] + ht[[2]]
+```
+#### ALCAM
+```{r, message = FALSE, warning = FALSE}
+pathways.show <- c("ALCAM") 
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netVisual_heatmap(object.list[[i]], signaling = pathways.show, color.heatmap = "Reds",title.name = paste(pathways.show, "signaling ",names(object.list)[i]))
+}
+#> Do heatmap based on a single object 
+#> 
+#> Do heatmap based on a single object
+ComplexHeatmap::draw(ht[[1]] + ht[[2]], ht_gap = unit(0.5, "cm"))
+
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netAnalysis_contribution(object.list[[i]], signaling = pathways.show, title = paste("Contribution of L-R pair to",pathways.show, "signaling -",names(object.list)[i]))
+}
+ht[[1]] + ht[[2]]
+```
+#### IL16
+```{r, message = FALSE, warning = FALSE}
+pathways.show <- c("IL16") 
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netVisual_heatmap(object.list[[i]], signaling = pathways.show, color.heatmap = "Reds",title.name = paste(pathways.show, "signaling ",names(object.list)[i]))
+}
+#> Do heatmap based on a single object 
+#> 
+#> Do heatmap based on a single object
+ComplexHeatmap::draw(ht[[1]] + ht[[2]], ht_gap = unit(0.5, "cm"))
+
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(object.list)) {
+  ht[[i]] <- netAnalysis_contribution(object.list[[i]], signaling = pathways.show, title = paste("Contribution of L-R pair to",pathways.show, "signaling -",names(object.list)[i]))
+}
+ht[[1]] + ht[[2]]
+```
+Save the final analyzed object.
+```{r, message = FALSE, warning = FALSE}
+saveRDS(cellchat, "cc.merge.rds")
+```

@@ -1,0 +1,660 @@
+---
+title: "Visulization"
+author: "William Tomaszeswki, Jonathan Perera"
+date: '`r Sys.Date()`'
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+## I. Setup 
+### Loading the Required Packages
+Please install and load the following packages. If not installed use the corresponding links given.
+```{r packages, message = FALSE, warning = FALSE}
+#BiocManager::install("Seurat")
+library(tidyverse)
+library(Seurat)
+library(patchwork)
+library(viridis) 
+library(readxl)
+library(scater)
+library(biomaRt)
+library(zen4R)
+library(ggplot2)
+library(gridExtra)
+library(EnhancedVolcano)
+library(kableExtra)
+library(stringr)
+library(EnhancedVolcano)
+library(Nebulosa)
+```
+
+## II. Loading in seurat object
+The Seurat object used in the paper can be accessed under zenodo accession [6654420](https://zenodo.org/record/6654420).
+
+```{r}
+download_zenodo("10.5281/zenodo.6654420",files = "Processed_CD45_Live_Fig2b.rds")
+m.ct2a <- readRDS("Processed_CD45_Live_Fig2b.rds")
+Idents(m.ct2a) <- m.ct2a$Cell.Type
+```
+
+
+## III. Visualization
+Here is a plot of all eighteen clusters (Fig. 2b) 
+```{r}
+DimPlot(m.ct2a, label = T, repel = T,label.size = 8) + theme(legend.position = "none")
+ggsave("m.ct2a_dimplot.pdf",device = "pdf", width = 2, height = 2, units = "in", scale = 6)
+```
+
+Here we split the data set by Genotype (labelled here, WT and CaMKK2) (Fig. 2b)
+```{r}
+DimPlot(m.ct2a, split.by = "Genotype") + theme(legend.position = "none")
+```
+  
+Expression here visualized for each cluster for a selected list of genes (Fig. 2d)
+```{r fig.height= 4, fig.width=12}
+DotPlot(m.ct2a, assay = "RNA", features = c("Tcf7","Slamf6","Cd4","Cd8a","Cd3e",
+                                            "Ncr1","Klrb1c",
+                                            "Cd19", "Siglech","Tcf4","Fscn1",
+                                            "Ccr7","Itgax","H2-DMb2",
+                                            "Xcr1","Clec9a",
+                                            "Flt3","Zbtb46",
+                                            "Gata2","Ms4a2",
+                                            "S100a9","Mmp9",
+                                            "Ace","Adgre4",
+                                            "Vcan","Ly6c2",
+                                            "P2ry12","Sall1","Crybb1",
+                                            "Nos2","Arg1",
+                                            "H2-Aa","Cd74",
+                                            "Apoe","Mrc1","Mertk","Adgre1")) + RotatedAxis() + theme(axis.text = element_text(size = 10), axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90))
+
+ggsave("m.ct2a_featuredotplot.pdf", width = 6, height = 2, units = "in", scale = 6) 
+```
+ 
+Here we split the data set by Mouse ID.
+```{r}
+DimPlot(m.ct2a, repel = T, group.by = "MouseID")
+```
+
+```{r}
+table(m.ct2a$MouseID)
+```
+
+#Iba1 Vln Plot (SF4.f)
+```{r, warning=FALSE, message=FALSE}
+VlnPlot(m.ct2a, features = "Aif1", assay = "RNA", sort = "increasing", pt.size = 0) + 
+  theme(legend.position = "none", text = element_text(size = 14), axis.text = element_text(size = 14))
+```
+
+## IV. Differential Expression Genotypes
+We then performed differential expression analysis on the following cell types between their genotypic identities (WT vs CaMKK2 KO)
+```{r, message = FALSE, warning=FALSE}
+##### 
+diffgenolist <- c("Microglia",
+                  "cMono","non-cMono","Neut","Baso",
+                  "DC1","DC2","DC3","pDC",
+                  "B Cell","NK Cell")
+
+Idents(m.ct2a) <- m.ct2a$Geno.Ident 
+lev <- levels(Idents(m.ct2a))
+lev <- lev[order(lev)]
+lev[c(2,3,6,8,9,10,11,12,13,14,16)]
+```
+Using the same FindMarkers function, we compare the WT and KO expression signatures for the following cell types: Microglia, cMono, non-cMono, Neut, Baso, DC1, DC2, DC3, pDC, B Cell, NK Cell. 
+```{r, message = FALSE, warning=FALSE, results='hide'}
+#BiocManager::install("MAST")
+g.markers <- lapply(c(2,3,6,8,9,10,11,12,13,14,16), function(i){
+  FindMarkers(m.ct2a, ident.1 = lev[i], ident.2 =  lev[i+17], min.pct = .1, test.use = "MAST", verbose = T, assay = "RNA") 
+})
+```
+
+### B cell
+```{r, message = FALSE, warning = FALSE}
+#BiocManager::install("EnhancedVolcano")
+
+lev[2]
+g.markers[[1]][1:100,]
+EnhancedVolcano(g.markers[[1]],lab=rownames(g.markers[[1]]),x="avg_log2FC",y="p_val_adj", 
+                selectLab = (rownames(g.markers[[1]] %>% slice_max(n = 40, order_by = abs(avg_log2FC)))), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "KO B cell vs. WT B Cell", 
+                subtitle = NULL, legendPosition = "none", col = c("black","black","black","red"))
+```
+
+### Baso - no DEGs
+```{r, message = FALSE, warning = FALSE}
+lev[3]
+g.markers[[2]][1:100,]
+EnhancedVolcano(g.markers[[2]],lab=rownames(g.markers[[2]]),x="avg_log2FC",y="p_val_adj", 
+                selectLab = (rownames(g.markers[[2]] %>% slice_max(n = 40, order_by = abs(avg_log2FC)))), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "KO Basophil vs. WT Basophil", 
+                subtitle = NULL, legendPosition = "none", col = c("black","black","black","red"))
+```
+
+### cMono
+```{r, message = FALSE, warning = FALSE}
+lev[6]
+g.markers[[3]][1:100,]
+EnhancedVolcano(g.markers[[3]],lab=rownames(g.markers[[3]]),x="avg_log2FC",y="p_val_adj", 
+                selectLab = (rownames(g.markers[[3]] %>% slice_max(n = 40, order_by = abs(avg_log2FC)))), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "KO cMono vs. WT cMono", 
+                subtitle = NULL, legendPosition = "none", col = c("black","black","black","red"))
+```
+
+### DC1
+```{r, message = FALSE, warning = FALSE}
+lev[8]
+g.markers[[4]][1:100,]
+EnhancedVolcano(g.markers[[4]],lab=rownames(g.markers[[4]]),x="avg_log2FC",y="p_val_adj", 
+                selectLab = (rownames(g.markers[[4]] %>% slice_min(n = 25, order_by = p_val_adj))), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "KO DC1 vs. WT DC1", 
+                subtitle = NULL, legendPosition = "none", col = c("black","black","black","red"))
+```
+
+### DC2
+```{r, message = FALSE, warning = FALSE}
+lev[9]
+g.markers[[5]][1:100,]
+EnhancedVolcano(g.markers[[5]],lab=rownames(g.markers[[5]]),x="avg_log2FC",y="p_val_adj", 
+                selectLab = (rownames(g.markers[[5]] %>% slice_max(n = 45, order_by = abs(avg_log2FC)))), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "KO DC2 vs. WT DC2", 
+                subtitle = NULL, legendPosition = "none", col = c("black","black","black","red"))
+```
+
+### DC3
+```{r, message = FALSE, warning = FALSE}
+lev[10]
+g.markers[[6]][1:100,]
+EnhancedVolcano(g.markers[[6]],lab=rownames(g.markers[[6]]),x="avg_log2FC",y="p_val_adj", 
+                selectLab = (rownames(g.markers[[6]] %>% slice_min(n = 25, order_by = p_val_adj))), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "KO DC3 vs. WT DC3", 
+                subtitle = NULL, legendPosition = "none", col = c("black","black","black","red"))
+```
+
+### Microglia
+```{r, message = FALSE, warning = FALSE}
+lev[11]
+g.markers[[7]][1:100,]
+EnhancedVolcano(g.markers[[7]],lab=rownames(g.markers[[7]]),x="avg_log2FC",y="p_val_adj", 
+                selectLab = (c(rownames(g.markers[[7]] %>% slice_min(n = 50, order_by = p_val_adj)),"Spp1")), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "KO Microglia vs. WT Microglia", 
+                subtitle = NULL, legendPosition = "none", col = c("black","black","black","red"))
+```
+
+### Neutrophil - NO DEGs
+```{r, message = FALSE, warning = FALSE}
+lev[12]
+g.markers[[8]][1:100,]
+EnhancedVolcano(g.markers[[8]],lab=rownames(g.markers[[8]]),x="avg_log2FC",y="p_val_adj", 
+                selectLab = (c(rownames(g.markers[[8]] %>% slice_min(n = 50, order_by = p_val_adj)))), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "KO Neuts vs. WT Neuts", 
+                subtitle = NULL, legendPosition = "none", col = c("black","black","black","red"))
+```
+### NK Cells
+```{r, message = FALSE, warning = FALSE}
+lev[13]
+g.markers[[9]][1:100,]
+EnhancedVolcano(g.markers[[9]],lab=rownames(g.markers[[9]]),x="avg_log2FC",y="p_val_adj", 
+                selectLab = (c(rownames(g.markers[[9]] %>% slice_min(n = 50, order_by = p_val_adj)))), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "KO NK vs. WT NK", 
+                subtitle = NULL, legendPosition = "none", col = c("black","black","black","red"))
+```
+
+### non-cMono
+```{r, message = FALSE, warning = FALSE}
+lev[14]
+g.markers[[10]][1:100,]
+EnhancedVolcano(g.markers[[10]],lab=rownames(g.markers[[10]]),x="avg_log2FC",y="p_val_adj", 
+                selectLab = (c(rownames(g.markers[[10]] %>% slice_min(n = 50, order_by = p_val_adj)))), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "KO non-cMono vs. WT non-cMono", 
+                subtitle = NULL, legendPosition = "none", col = c("black","black","black","red"))
+```
+### pDC
+```{r, message = FALSE, warning = FALSE}
+lev[16]
+g.markers[[11]][1:100,]
+EnhancedVolcano(g.markers[[11]],lab=rownames(g.markers[[11]]),x="avg_log2FC",y="p_val_adj", 
+                selectLab = (c(rownames(g.markers[[11]] %>% slice_min(n = 18, order_by = p_val_adj)))), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "KO pDC vs. WT pDC", 
+                subtitle = NULL, legendPosition = "none", col = c("black","black","black","red"))
+```
+
+### Cell Type Frequency and Proportions 
+```{r, message = FALSE, warning = FALSE, results = 'hide'}
+#All Cell Type Heatmap
+Idents(m.ct2a) <- m.ct2a$Geno.Ident
+ct2a.avg <- AverageExpression(m.ct2a,assays = "RNA",add.ident = "hash.ID", return.seurat = T) 
+```
+
+```{r, message = FALSE, warning = FALSE}
+#CaMKK2 Counts
+counts <- GetAssayData(m.ct2a, slot = "data", assay = "RNA")
+camkk2.counts <- counts["Camkk2",]
+camkk2 <- data.frame(counts = camkk2.counts, Genotype = m.ct2a$Genotype, Celltype = Idents(m.ct2a))
+
+#SF 2b
+VlnPlot(subset(m.ct2a, subset = Genotype == "WT"),features = "Camkk2", assay = "RNA", sort = "increasing", pt.size = 0) + theme(legend.position = "none")
+```
+
+
+Plotting cell frequency
+```{r, message = FALSE, warning = FALSE}
+meta <- m.ct2a@meta.data
+idents <- m.ct2a@active.ident
+meta <- meta[,c("Genotype","MouseID","HTO_maxID")]
+meta <- meta %>% add_column(Idents = idents) 
+meta[,(c("Genotype","MouseID","HTO_maxID"))] <- lapply(meta[,(c("Genotype","MouseID","HTO_maxID"))], as.factor)
+
+meta1 <- meta %>% group_by(MouseID,Idents) %>% summarise(n = n()) %>% mutate(freq =  prop.table(n)*100)
+geno <- c(rep("Camkk2KO",67),rep("WT",66)) 
+
+ungroup(meta1) %>% mutate(Geno = geno) %>% ggplot(aes(Idents,freq,fill=Geno)) + geom_boxplot(position = position_dodge()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+Cell_freq <- ungroup(meta1) %>% mutate(Geno = geno)
+write_excel_csv(Cell_freq,"Cell_freq.csv")
+```
+
+Proportion Table
+```{r, message = FALSE, warning = FALSE}
+prop.table(table(Idents(m.ct2a),m.ct2a$MouseID),margin = 2)*100
+```
+
+### TAM DEGs
+```{r, message = FALSE, warning = FALSE}
+Idents(m.ct2a) <- m.ct2a$Cell.Type
+DefaultAssay(m.ct2a) <- "RNA"
+tam.ct2a <- subset(m.ct2a,idents = c("DC-like TAM","Apoe+ TAM","Nos2+ TAM"))
+
+#F6.c
+DimPlot(subset(m.ct2a, idents = c("cMono","Nos2+ TAM","Apoe+ TAM","DC-like TAM","non-cMono", "Microglia")), label = T, repel = T, label.size = 8) + theme(legend.position = "none")
+ggsave("TAMDim.pdf",height = 2,width = 2,scale = 3)
+```
+
+### DC-like TAM vs Apoe+ TAM 
+Differential expression comparison between DC-like TAM and Apoe+ TAM
+```{r, message = FALSE, warning = FALSE, results='hide'}
+Idents(m.ct2a) <- m.ct2a$Cell.Type
+tamdcvapo <- FindMarkers(m.ct2a, ident.1 = "DC-like TAM", ident.2 = "Apoe+ TAM", logfc.threshold = .1, min.pct = .1, test.use = "MAST", verbose = T, assay = "RNA")
+
+#filtering this marker list based on avg_log2FC values 
+tamdcvapo %>% filter(avg_log2FC >.1 & p_val_adj < .05) %>% mutate(genes = rownames(.)) %>% write_csv(.,"tamdcvapodeg.csv")
+```
+
+Volcano Plot Visualization of the above comparison (Figure 6a)
+```{r, message = FALSE, warning = FALSE}
+#CD274 is PDL1 
+EnhancedVolcano(tamdcvapo,lab=rownames(tamdcvapo),x="avg_log2FC",y="p_val_adj", 
+                selectLab = c("H2-Aa","Spp1","Stat1","Irf7","Cd74","Ccl5","Cxcl9","Cxcl10","Ccl6","Ccl9", "Vcam1", "Cd83",
+                              "C3","Apoe","Cd63","Itga6","Ly6c2","Trem2","Mrc1","Arg1", "C1qa",
+                              "Cd9","Ciita","B2m","Tap1","Stat1","Ifi44","Ifi202b","Ifitm3",
+                              "Fcrls","Olfml3","Sell","Plac8","Arg2","Irf1","Hif1a","Nos2","Il18bp","Cd47","Cx3cr1","Ccr2","Cd40",
+                              "Nfkbia","Egr1","Lpl","Cd63","Ctsl","Cd68","Cadm1","Timp2","Card9"), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "DC-like TAM vs. Apoe+ TAM", 
+                subtitle = NULL, legendPosition = "none", col = c("red","red","red","red"),colAlpha = .2,ylab = bquote(~-Log[10]~"(adj.p-val)"), 
+                xlab =bquote(~Log[2]~"FC(DC-like TAM/Apoe+ TAM)") ,caption = "", labSize = 7) 
+ggsave("KOvWTMacVolc.pdf",width = 7, height = 4,scale = 2)
+```
+
+Violin Plot for selected features for DC-like TAM,Apoe+ TAM, and Nos2+ TAM
+```{r fig.asp = 1.5, fig.width = 4.5, fig.height = 9}
+VlnPlot(tam.ct2a,features = c("Trem2","Spp1","Apoe","Cxcl9","Ccl5","H2-Aa","Mrc1","Cx3cr1","Stat1","Irf7","C1qa"), sort = "increasing", pt.size = 0)
+```
+
+### Calculating Module score: Disease Associated Microglia
+
+Using genes pulled from [FigS5 Upregulated DAM4E](https://www.cell.com/fulltext/S0092-8674(17)30578-0)
+```{r fig.asp = 1.5, fig.width = 4.5, fig.height = 9, message = FALSE, warning = FALSE}
+consdam <- list(c("Trem2","Apoe","Spp1","Cd63","Cd9","Axl","Tyrobp","Ctsb","Fth1","Lpl","Cst7"))
+```
+
+Subset of m.ct2a for Mononuclear Phagocytes (MNPs)
+```{r fig.asp = 1.5, fig.width = 4.5, fig.height = 9, message = FALSE, warning = FALSE}
+mnps <- subset(m.ct2a, idents = c("cMono","Nos2+ TAM","Apoe+ TAM","DC-like TAM","non-cMono", "Microglia"))
+l <- c("Microglia","Apoe+ TAM","Nos2+ TAM","DC-like TAM","cMono","non-cMono")
+Idents(mnps) <- factor(Idents(mnps),levels = l)
+mnps$Genotype <- factor(mnps$Genotype,levels = c("WT","Camkk2KO"))
+```
+
+Visualization of conserved DAM gene features for MNPs (S5a)
+
+```{r fig.height= 8, fig.width=12}
+VlnPlot(mnps,features = consdam[[1]],split.by = "Genotype", pt.size = 0)
+```
+
+
+```{r fig.width = 6, fig.height = 9, message = FALSE, warning = FALSE}
+plots <- VlnPlot(mnps,consdam[[1]], pt.size = 0, group.by = "Genotype") + theme(legend.position = "right")
+plots <- lapply(
+  X = plots,
+  FUN = function(p) p + ggplot2::scale_fill_manual(values = c("red","blue"))
+)
+
+CombinePlots(plots = plots)
+```
+
+Calculation of module score for above mentioned genes
+```{r, message = FALSE, warning = FALSE}
+m.ct2a <- AddModuleScore(m.ct2a,consdam,name = "DAM_Genes_Cons", assay = "RNA")
+```
+
+### Visualization of Conserved DAM Genes 
+(Fig 6c)
+```{r}
+plot_density(subset(m.ct2a, idents = c("cMono","Nos2+ TAM","Apoe+ TAM","DC-like TAM","non-cMono", "Microglia")),
+             features = "DAM_Genes_Cons1", pal = "inferno",method = "wkde") + 
+  labs(title = "Disease Associated Microglia Signature")
+ggsave("DAMFeatPlot.pdf",width = 3,height = 3,scale = 3)
+```
+
+### Expression Levels for Conserved DAM Genes for selected cell types 
+(Fig 6d)
+```{r}
+VlnPlot(subset(m.ct2a, idents = c("cMono","Nos2+ TAM","Apoe+ TAM","DC-like TAM","non-cMono", "Microglia")),
+        features = "DAM_Genes_Cons1", sort = "increasing", pt.size = 0) + 
+  theme(legend.position = "none", text = element_text(size = 14), axis.text = element_text(size = 14))
+
+rm(tam.ct2a)
+gc()
+```
+
+## V. Reclustering TILs
+Subsetting Tumor-Infiltrating Lymphocytes (TILs) from the main object 
+```{r}
+tils <- subset(m.ct2a,idents = c("CD8 TIL","CD4 TIL","Stem-Like TIL"))
+DimPlot(tils)
+```
+
+### Tcf7-Slamf6 Expression Correlate
+Investigating the relationship between Tcf7 and Slamf6 expression. 
+```{r, message=FALSE, warning=FALSE}
+FeaturePlot(tils, features = c("Slamf6","Tcf7"), split.by = "Genotype")
+```
+
+```{r, message=FALSE, warning=FALSE}
+til.count <- GetAssayData(tils, slot = "data", assay = "RNA")
+slamf6.count <- til.count["Slamf6",]
+tcf7.count <- til.count["Tcf7",]
+til.counts <- data.frame(tcf7 = tcf7.count, slamf6 = slamf6.count)
+til.counts <- til.counts %>%  filter(tcf7 != 0 & slamf6 != 0)
+ggplot(til.counts, aes(tcf7, slamf6)) + geom_point() + geom_smooth(method = "lm")
+til.lm <- lm(tcf7 ~ slamf6, data = til.counts)
+summary(til.lm)
+```
+### TILs Integrated Analysis 
+Performing analysis on the r.tils, a duplicate of the tils objec utilizing a similar workflow as above. 
+```{r, message=FALSE,warning=FALSE,results='hide'}
+r.tils <- tils
+r.tils <- SCTransform(r.tils, vars.to.regress = c("percent.mt", "S.Score", "G2M.Score"))
+r.tils <- RunPCA(r.tils)
+ElbowPlot(r.tils, ndims = 50)
+```
+
+```{r fig.width = 4, fig.height = 20}
+DimHeatmap(r.tils, dims = 1:30, cells = 500)
+```
+Continuing on the processing of the r.tils object
+```{r, message=FALSE,warning=FALSE,results='hide'}
+r.tils <- FindNeighbors(r.tils,dims = 1:30)
+r.tils <- RunUMAP(r.tils, dims = 1:30)
+r.tils <- FindClusters(r.tils, resolution = .5)
+```
+
+### Finding and Plotting TILs DEG Markers 
+```{r}
+DimPlot(r.tils, repel = T, group.by = "MouseID")
+```
+
+Identifying conserved markers between each cell type and the rest
+```{r, message=FALSE,warning=FALSE,results='hide'}
+DefaultAssay(r.tils) <- "RNA"
+
+t.markers <- lapply(c(0:(length(levels(Idents(r.tils)))-1)), function(i){
+  FindConservedMarkers(r.tils, ident.1 = i, grouping.var = "Genotype", verbose = T, test.use = "MAST")
+})
+```
+
+### Cluster 0 - CD8 TILs
+```{r, message=FALSE, warning=FALSE}
+t.markers[[1]][1:100,c((2:5),(7:10))]
+FeaturePlot(r.tils,features = c("Cd8a","Cxcr6","Trgc2","Irf8","Pdcd1","Runx3","Lgals3"))
+```
+
+### Cluster 1 - Tregs
+```{r, message=FALSE, warning=FALSE}
+t.markers[[2]][1:100,c((2:5),(7:10))]
+FeaturePlot(r.tils,features = c("Ikzf2","Foxp3","Icos","Ctla4","Il2ra","Tnfrsf1b","Il10"))
+```
+
+### Cluster 2 - Stem-Like Tils
+```{r, message=FALSE, warning=FALSE}
+as_tibble(t.markers[[3]][1:100,c((2:5),(7:10))],rownames = NA) %>% filter(WT_avg_log2FC > 0) %>% as.data.frame()
+FeaturePlot(r.tils,features = c("Tcf7","Slamf6","S1pr1","Cd7","Lef1","Cxcr4"))
+```
+
+### Cluster 3 - Effector CD4
+```{r, message=FALSE, warning=FALSE}
+VlnPlot(r.tils, features = "Cxcr3", split.by = "Genotype", sort = T)
+as_tibble(t.markers[[4]][,c((2:5),(7:10))],rownames = NA) %>% filter(WT_avg_log2FC > 0) %>% as.data.frame()
+FeaturePlot(r.tils,features = c("Cd4","Cd40lg","Cd200","Cd82","Ccl1","Il1r2","Zap70","Nfkb1","Il18rap","Ifng","Tnf","Il18r1"))
+```
+
+### Cluster 4 - gamma delta
+```{r, message=FALSE, warning=FALSE}
+as_tibble(t.markers[[5]][1:100,c((2:5),(7:10))],rownames = NA) %>% filter(WT_avg_log2FC > 0) %>% as.data.frame()
+FeaturePlot(r.tils,features = c("Cd163l1","Trdv4","Trgc1","Trdc","Rorc","Il1r1","Sox13","Il23r","Igf1r","Aqp3"))
+```
+
+### Cluster 5 - Cycling TIL
+```{r, message=FALSE,warning=FALSE}
+as_tibble(t.markers[[6]][1:100,c((2:5),(7:10))],rownames = NA) %>% filter(WT_avg_log2FC > 0) %>% as.data.frame()
+FeaturePlot(r.tils,features = c("Cd3e","Nabp1","mt-Atp6","mt-Co2"))
+```
+
+### Cluster 6 - TAM that ate TILs
+```{r, message=FALSE,warning=FALSE}
+as_tibble(t.markers[[7]][1:100,c((2:5),(7:10))],rownames = NA) %>% filter(WT_avg_log2FC > 0) %>% as.data.frame()
+FeaturePlot(r.tils,features = c("Trem2","Tmem119","Itgam"))
+```
+
+### Assigning Cluster Identities 
+```{r, message=FALSE,warning=FALSE, results = 'hide'}
+new.cluster.ids <- c("CD8 TIL", "Treg","Stem-Like TIL","Effector CD4","Gamma-Delta TIL","Cycling TIL","TAM TIL")
+r.tils[["orig_clust"]] <- Idents(r.tils)
+names(new.cluster.ids) <- levels(r.tils)
+r.tils <- RenameIdents(r.tils,new.cluster.ids)
+```
+
+Removing Cycling TIL and TAM TIL populations from the object for the purposes of future analysis
+```{r,message=FALSE,warning=FALSE,results='hide'}
+excl <- which(Idents(r.tils) == "Cycling TIL" | Idents(r.tils) == "TAM TIL")
+i <- Cells(r.tils)[excl]
+r.tils <- r.tils[,!colnames(r.tils) %in% i]
+```
+
+
+At this stage we save the Seurat object and proceed to visualization. 
+
+```{r, message = FALSE, warning = FALSE, results = 'hide'}
+saveRDS(r.tils, "r_tils.rds")
+rm(r.tils)
+gc()
+```
+
+This saved seurat object is additionally available under zenodo accession [6654420](https://zenodo.org/record/6654420).Fig3d
+```{r message = FALSE, warning = FALSE}
+download_zenodo("10.5281/zenodo.6654420",files = "Reclustered_TILs_Fig3a.rds")
+r.tils <- readRDS("Reclustered_TILs_Fig3a.rds")
+Idents(r.tils) <- r.tils$Celltype
+```
+
+```{r,message=FALSE,warning=FALSE}
+DimPlot(r.tils, label = T, repel = T) #UMAP plotting
+```
+Here we split the TILs data set by Genotype. (Fig. 5a)
+```{r,message=FALSE,warning=FALSE}
+DimPlot(r.tils, label = T, repel = T, group.by = "Genotype")
+```
+
+
+### Differentially Expressed Genes between WT and KO for Cd8+, Cd4+, Stem-like TILs
+```{r, message=FALSE,warning=FALSE,results='hide'}
+Geno_Ident <- paste(r.tils$Genotype,Idents(r.tils),sep = "_")
+geno_tils <- tils
+Idents(geno_tils) <- Geno_Ident
+
+cd8deg <- FindMarkers(geno_tils, ident.1 = "Camkk2KO_CD8 TIL", ident.2 = "WT_CD8 TIL", min.pct = .1, test.use = "MAST")
+
+cd4deg <- FindMarkers(geno_tils, ident.1 = "Camkk2KO_Effector CD4", ident.2 = "WT_Effector CD4", min.pct = .1, test.use = "MAST")
+
+stemdeg <- FindMarkers(geno_tils, ident.1 = "Camkk2KO_Stem-Like TIL", ident.2 = "WT_Stem-Like TIL", min.pct = .1, test.use = "MAST")
+```
+
+### TIL Frequency as a percentage of prior cell ident
+```{r,message=FALSE,warning=FALSE}
+meta.t <- r.tils@meta.data
+Idents(r.tils) <- r.tils$Celltype
+idents.t <- r.tils@active.ident
+meta.t <- meta.t[,c("Genotype","MouseID","HTO_maxID")]
+meta.t <- meta.t %>% add_column(Idents = idents.t) 
+```
+Supp. Fig. 4a
+```{r,message=FALSE,warning=FALSE}
+i = rownames(meta) %in% rownames(meta.t)
+meta <- meta %>% add_column(old.ident1 = m.ct2a$Cell.Type)
+meta.t <- meta.t %>% add_column(old.ident = meta$old.ident1[i])
+meta.t %>% group_by(Idents,old.ident.1) %>% summarise(n = n()) %>% mutate(freq = prop.table(n)*100) %>% 
+  ungroup() %>% ggplot(aes(Idents,freq,fill = old.ident.1)) + 
+  geom_bar(position = "fill", stat = "identity") + xlab("Reclustered Cell Identity")+
+  ylab("Frequency") + labs(fill= "Original Cell Identity") + 
+  theme_classic(base_size = 15) + RotatedAxis() 
+```
+
+### Reclustered TIL frequency by genotype 
+```{r,message=FALSE,warning=FALSE}
+meta.t2 <- meta.t %>% group_by(MouseID,Idents) %>% summarise(n = n()) %>% mutate(freq =  prop.table(n)*100)
+meta.t2 <- meta.t2 %>% mutate(geno = gsub('_.*','',MouseID))
+ungroup(meta.t2) %>% mutate(Geno = geno) %>% ggplot(aes(Idents,freq,fill=Geno)) + geom_boxplot(position = position_dodge())
+til_freq <- ungroup(meta.t2)
+write_excel_csv(til_freq,"TIL_freq.csv")
+```
+
+Identifying markers for each cell type compared to all other cell types. 
+```{r,message=FALSE,warning=FALSE, results='hide'}
+DefaultAssay(r.tils)<- "RNA"
+tildegmast <- FindAllMarkers(r.tils, only.pos = T,min.pct = .1,logfc.threshold = .1, test.use = "MAST", assay = "RNA")
+tildegsmast <- tildegmast %>% group_by(cluster) %>% top_n(n = 15, wt = avg_log2FC)
+```
+
+Heatmap for TILs differentially expressed genes
+```{r,fig.height=10}
+DoHeatmap(r.tils, features = c(tildegsmast$gene))
+```
+
+
+Dot Plot of TILs for selected features (Fig. 3b)
+```{r,fig.width= 15, fig.height=3}
+#Annotation
+levels(r.tils) <- c("Gamma-Delta TIL","Stem-Like TIL","CD8 TIL","Effector CD4","Treg") 
+
+DotPlot(r.tils, assay = "RNA", features = c("Ikzf2","Foxp3","Icos","Ctla4","Il2ra","Tnfrsf1b","Il10",
+                                            "Cd4","Cd40lg","Cd200","Cd82","Zap70","Nfkb1","Il18rap","Ifng","Tnf",
+                                            "Cd8a","Cxcr6","Irf8","Pdcd1","Runx3","Lgals3",
+                                            "Tcf7","Slamf6","S1pr1","Cd7","Lef1",
+                                            "Cd163l1","Trdv4","Rorc","Sox13","Igf1r","Aqp3"
+                                           )) + RotatedAxis() + theme(axis.text = element_text(size = 20), axis.title = element_blank()) 
+ggsave("tilsdotplot.pdf",width = 3, height = 1,scale = 6)
+```
+
+Cytolysis ModuleScore
+Here we calculate a Module Score based on Cytolysis GO Analysis. Please place the accompanying "cytolysis_GO.csv" document in your working directory (Supp. Fig. 3d)
+
+```{r, message=FALSE, warning=FALSE, results='hide'}
+url <- "https://raw.githubusercontent.com/wht10/CT2A_scRNAseq_CaMKK2KOvWT/master/cytolysis_GO.csv"
+download.file(url, "cytolysis_GO.csv")
+cytolist <- read_csv("cytolysis_GO.csv")
+cytolist <- list(cytolist$Symbol)
+r.tils <- AddModuleScore(r.tils,cytolist,name = "cytolysis", assay = "RNA")
+```
+
+Plot Density of cytolysis-related genes for TILs (Fig. 3d)
+```{r}
+plot_density(r.tils,
+             features = "cytolysis1", pal = "inferno",method = "wkde") + 
+  labs(title = "Cytolysis Gene Signature")
+ggsave("tilscytosignature.pdf",width = 2,height = 2,scale = 4)
+```
+
+
+## TIL Differentially Expressed Genes for KO V WT 
+```{r, message=FALSE,warning=FALSE, results = "hide"}      
+#TIL KO V WT
+
+Geno_Ident <- paste(r.tils$Genotype,Idents(r.tils),sep = "_")
+geno_tils <- r.tils
+geno_tils[["Geno_Ident"]] <- Geno_Ident
+Idents(geno_tils) <- geno_tils$Geno_Ident
+l <- levels(geno_tils)
+
+#rearranging the order of the geno/cell type names in the list 
+l6 <- l[6]
+l7 <- l[7]
+l8 <- l[8]
+l9 <- l[9]
+l10 <- l[10]
+
+l[8] <- l6
+l[6] <- l7
+l[7] <- l8
+l[10] <- l9
+l[9] <- l10
+
+#FindMarkers to differentially expressed genes between WT and KO for the above 5 TIL types 
+t.g.markers <- lapply(c(1:(length(levels(Idents(geno_tils)))/2)), function(i){
+  FindMarkers(geno_tils, ident.1 = l[i], ident.2 =  l[i+5], min.pct = .1, test.use = "MAST", verbose = T, assay = "RNA")
+})
+
+```
+
+### CD8 TILs (Fig. 3c)
+```{r,message=FALSE,warning=FALSE}
+t.g.markers[[1]][1:75,]
+t.g.markers[[1]] %>% filter(avg_log2FC >.1 & p_val_adj < .05) %>% mutate(genes = rownames(.)) %>% write_csv(.,"cd8kovwt.csv")
+
+VlnPlot(r.tils,
+        features = c("Apoe","Tox","Stat3","Gzmb","Gzma","Ccr2"), 
+        idents = "CD8 TIL", 
+        split.by = "Genotype", split.plot = F, combine = T, pt.size = 0,cols = c("blue","red"))
+ggsave("CD8DEG.pdf",height = 3,width = 2,scale = 2)
+```
+Volcano Plot for CD8+ TILs DEGs  between WT and KO
+```{r,message=FALSE,warning=FALSE}
+EnhancedVolcano(t.g.markers[[1]],lab=rownames(t.g.markers[[1]]),x="avg_log2FC",y="p_val_adj", 
+                selectLab = c("Apoe","Gzmb","Lgals1","Gzma","Tox","Ccr2","Cd52","Stat3","Ctsw","Ly6c2"), 
+                pCutoff = NA,FCcutoff = NA,drawConnectors = T, title = "KO CD8 vs. WT CD8", 
+                subtitle = NULL, legendPosition = "none", col = c("red","red","red","red"),colAlpha = .2,ylab = bquote(~-Log[10]~"(adj.p-val)"), 
+                xlab =bquote(~Log[2]~"FC(CaMKK2 KO CD8 TIL/WT CD8 TIL)") ,caption = "", 
+                labSize = 7) 
+ggsave("KOvWTCD8Volc.pdf",width = 3,height = 4,scale = 2)
+```
+### Stem-like TILs
+```{r,message=FALSE,warning=FALSE}
+t.g.markers[[2]][1:75,]
+VlnPlot(r.tils,
+        features = c("Ly6a","Stat1","Cd4","Irf7"), 
+        idents = "Stem-Like TIL", 
+        split.by = "Genotype", split.plot = T)
+```
+### Treg
+```{r,message=FALSE,warning=FALSE}
+t.g.markers[[3]][1:75,]
+VlnPlot(r.tils,
+        features = c("Ahr","Ccr2","Prf1","Cxcr6","Nfkbid","Ccl5","Gzmb","Klrg1","Foxp3","Cd83"), 
+        idents = "Treg", 
+        split.by = "Genotype", split.plot = T)
+```
+### Gamma-Delta TIL
+```{r,message=FALSE,warning=FALSE}
+t.g.markers[[5]][1:75,]
+VlnPlot(r.tils,
+        features = c("Apoe"), 
+        idents = "Gamma-Delta TIL", 
+        split.by = "Genotype", split.plot = T)
+```
