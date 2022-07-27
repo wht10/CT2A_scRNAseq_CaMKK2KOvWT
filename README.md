@@ -10,7 +10,7 @@ The seurat object that was used throughout the manuscript is available under zen
 
 Details regarding how the seurat object was used to construct the visualizations in the manuscript are available [here](https://htmlpreview.github.io/?https://github.com/wht10/CT2A_scRNAseq_CaMKK2KOvWT/blob/master/Analysis_Markdown_Docs/Visualization.nb.html)
 
-Details regarding how the heatmaps wihtin the manuscript were produced are available [here](https://htmlpreview.github.io/?https://github.com/wht10/CT2A_scRNAseq_CaMKK2KOvWT/blob/master/Analysis_Markdown_Docs/Heatmap.html)
+Details regarding how the heatmaps within the manuscript were produced are available [here](https://htmlpreview.github.io/?https://github.com/wht10/CT2A_scRNAseq_CaMKK2KOvWT/blob/master/Analysis_Markdown_Docs/Heatmap.html)
 
 Details regarding how the cell-cell communication analysis was performed are available [here](https://htmlpreview.github.io/?https://github.com/wht10/CT2A_scRNAseq_CaMKK2KOvWT/blob/master/Analysis_Markdown_Docs/Cell_Cell_Comm.nb.html)
 
